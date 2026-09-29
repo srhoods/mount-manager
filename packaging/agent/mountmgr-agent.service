@@ -1,0 +1,17 @@
+[Unit]
+Description=Mount Manager agent
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=mountmgr
+Group=mountmgr
+ExecStart=/usr/sbin/mmd -f -c /etc/mountmgr/agent.conf
+Restart=always
+RestartSec=30
+# Mounts are performed via sudo (see /etc/sudoers.d/mountmgr), so NoNewPrivileges must stay off and
+# the service must share the host mount namespace (no PrivateMounts/ProtectSystem).
+
+[Install]
+WantedBy=multi-user.target

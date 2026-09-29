@@ -1,0 +1,14 @@
+{
+  "url": "ldaps://dc1.corp.example.com:636",
+  "ca_file": "/etc/mountmgr-server/ldap-ca.pem",
+  "bind_dn": "CN=svc-mountmgr,OU=Service Accounts,DC=corp,DC=example,DC=com",
+  "bind_password_file": "/etc/mountmgr-server/ldap-bind.password",
+  "user_base": "DC=corp,DC=example,DC=com",
+  "user_filter": "(&(objectClass=user)(sAMAccountName=%s))",
+  "group_attr": "memberOf",
+  "role_map": {
+    "CN=MountMgr-Admins,OU=Groups,DC=corp,DC=example,DC=com": "admin",
+    "CN=MountMgr-Operators,OU=Groups,DC=corp,DC=example,DC=com": "operator",
+    "MountMgr-ReadOnly": "readonly"
+  }
+}

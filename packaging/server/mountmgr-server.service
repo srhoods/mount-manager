@@ -1,0 +1,25 @@
+[Unit]
+Description=Mount Manager server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=mmserver
+Group=mmserver
+EnvironmentFile=/etc/mountmgr-server/server.env
+ExecStart=/usr/sbin/mmserver -names ${MM_NAMES} -agent-listen ${MM_AGENT_LISTEN} -admin-listen ${MM_ADMIN_LISTEN}
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target
