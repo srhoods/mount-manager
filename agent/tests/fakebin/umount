@@ -1,0 +1,5 @@
+#!/bin/bash
+echo "umount $*" >> "$MM_FAKE/calls.log"
+mp=$1
+if [ -e "$MM_FAKE/busy" ] && grep -qxF "$mp" "$MM_FAKE/busy"; then echo "umount.nfs4: $mp: device is busy" >&2; exit 32; fi
+grep -v " $mp " "$MM_FAKE/mountinfo" > "$MM_FAKE/mountinfo.new"; mv "$MM_FAKE/mountinfo.new" "$MM_FAKE/mountinfo"

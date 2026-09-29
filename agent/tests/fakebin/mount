@@ -1,0 +1,14 @@
+#!/bin/bash
+# Fake mount(8) for the agent test suite. State lives in $MM_FAKE (a directory).
+# usage: mount -t TYPE [-o OPTS] SOURCE MOUNTPOINT
+echo "mount $*" >> "$MM_FAKE/calls.log"
+[ -e "$MM_FAKE/hang_mount" ] && sleep 30
+if [ -e "$MM_FAKE/fail_mount" ]; then echo "mount.nfs: Connection timed out" >&2; exit 32; fi
+fst=""; opts=""
+while [ $# -gt 2 ]; do case "$1" in -t) fst=$2; shift 2;; -o) opts=$2; shift 2;; *) break;; esac; done
+src=$1; mp=$2
+# the real kernel reports NFS mounts as nfs4 when v4 is negotiated
+[ "$fst" = nfs ] && fst=nfs4
+grep -v " $mp " "$MM_FAKE/mountinfo" > "$MM_FAKE/mountinfo.new"; mv "$MM_FAKE/mountinfo.new" "$MM_FAKE/mountinfo"
+echo "100 1 0:50 / $mp rw,relatime - $fst $src rw,$opts" >> "$MM_FAKE/mountinfo"
+echo "$opts" > "$MM_FAKE/last_opts"
