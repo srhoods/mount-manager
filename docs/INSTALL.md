@@ -1,0 +1,401 @@
+# Mount Manager — Installation Guide
+
+This guide covers three things, in order:
+
+1. [Postgres](#1-postgres) — the data store
+2. [Mount Manager server](#2-mount-manager-server) — API, built-in CA, web UI
+3. [Bootstrapping a new host](#3-bootstrapping-a-new-host-agent) — installing and enrolling the agent
+
+It applies to version 0.2.x on Rocky Linux 9+. High availability and multi-site are not covered (not implemented yet).
+
+## Architecture in one page
+
+```
+                      HTTPS (browser, mmctl)                 mTLS (agents)
+  admins ──────────────────────────────┐            ┌──────────────────────── hosts (mmd)
+                                       ▼            ▼
+                              ┌──────────────────────────┐        SQL        ┌────────────┐
+                              │ mountmgr-server          │ ────────────────▶ │ PostgreSQL │
+                              │  :8444 admin API + web UI│                   └────────────┘
+                              │  :8443 agent API (mTLS)  │
+                              │  built-in CA             │
+                              └──────────────────────────┘
+```
+
+| Port | Host | Purpose | Who connects |
+|------|------|---------|--------------|
+| 5432/tcp | Postgres | database | the server only |
+| 8443/tcp | server | agent API (mTLS after enrolment) | every managed host |
+| 8444/tcp | server | web UI and REST API (HTTPS, sign-in required) | admins, `mmctl` |
+
+Packages (build them with [Appendix A](#appendix-a-building-the-packages)):
+
+| RPM | Install on | Contains |
+|-----|-----------|----------|
+| `mountmgr-server` | the server | `mmserver`, systemd unit, `server.env`, `ldap.json.example` |
+| `mountmgr-cli` | admin workstations / the server | `mmctl` |
+| `mountmgr-agent` | every managed host | `mmd`, systemd unit, `agent.conf`, sudoers rules |
+
+Sizing: the design target is about 5,000 agents polling every 5 minutes, which is a few requests per second. A
+small VM (2 vCPU, 4 GB) is ample for the server; Postgres has the same modest needs.
+
+---
+
+## 1. Postgres
+
+Developed and tested against PostgreSQL 16 (the Rocky 9 AppStream module), which these steps use. Other recent versions should work but are untested.
+
+### 1.1 Install and initialise
+
+```bash
+dnf -y module enable postgresql:16
+dnf -y install postgresql-server
+postgresql-setup --initdb
+systemctl enable --now postgresql
+```
+
+### 1.2 Create the database and role
+
+Generate a strong password and keep it; the server needs it in section 2.
+
+```bash
+PW=$(openssl rand -hex 16); echo "$PW"       # record this securely
+sudo -u postgres psql <<EOF
+CREATE ROLE mountmgr LOGIN PASSWORD '$PW';
+CREATE DATABASE mountmgr OWNER mountmgr;
+EOF
+```
+
+The server creates and upgrades its own tables at start-up (the schema is additive and idempotent), so the role
+only needs to own the database.
+
+### 1.3 Allow the server to connect
+
+Edit `/var/lib/pgsql/data/postgresql.conf`:
+
+```
+listen_addresses = '*'          # or the specific interface address
+```
+
+Edit `/var/lib/pgsql/data/pg_hba.conf` and allow **only the server's address** (repeat per server when you add more):
+
+```
+host  mountmgr  mountmgr  <server-ip>/32  scram-sha-256
+```
+
+```bash
+systemctl restart postgresql
+firewall-cmd --permanent --add-rich-rule='rule family=ipv4 source address=<server-ip>/32 port port=5432 protocol=tcp accept'
+firewall-cmd --reload             # only if firewalld is running
+```
+
+Verify from the server host: `psql "postgres://mountmgr:$PW@<pg-host>:5432/mountmgr" -c 'select 1'`.
+
+### 1.4 Production notes
+
+- **Encrypt the connection.** Enable TLS in Postgres (`ssl = on` with a certificate) and use
+  `?sslmode=verify-full` in the DSN. The examples below omit it only because the lab network is isolated.
+- **Back it up — and protect the backups.** The database holds the configuration, the audit history (kept
+  indefinitely), sessions, **and the CA private key and server key** (table `kv`). Anyone who can read a backup can
+  mint agent certificates. Use `pg_dump`/`pg_basebackup`, encrypt the backups, and restrict who can read them.
+- **Disk growth.** The `audit` table grows for ever by design. At 5,000 hosts a quiet fleet adds few rows;
+  a change storm adds a few per host. Plan partitioning or archival before it matters.
+
+---
+
+## 2. Mount Manager server
+
+### 2.1 Install
+
+```bash
+dnf -y install ./mountmgr-server-<version>.el9.x86_64.rpm ./mountmgr-cli-<version>.el9.x86_64.rpm
+```
+
+This creates the `mmserver` system user and installs `/usr/sbin/mmserver`, the `mountmgr-server` unit and
+`/etc/mountmgr-server/`. The service is **not** started yet.
+
+### 2.2 Configure `/etc/mountmgr-server/server.env`
+
+The file is mode `0640 root:mmserver` because it holds the database password.
+
+```ini
+MM_DSN=postgres://mountmgr:<PASSWORD>@<pg-host>:5432/mountmgr?sslmode=verify-full
+# Every DNS name and IP that agents or admins will use to reach this server. These become the
+# subject alternative names of the server certificate - a name that is not listed here will fail TLS.
+MM_NAMES=mm01.example.com,10.20.30.40
+MM_AGENT_LISTEN=:8443
+MM_ADMIN_LISTEN=:8444
+#MM_LDAP_CONFIG=/etc/mountmgr-server/ldap.json     # see 2.5
+```
+
+Use a DNS name that you can keep for the life of the deployment (for example a CNAME or load-balancer name):
+agents are configured with it.
+
+### 2.3 Create the first administrator and start the service
+
+Create the local `admin` account **before** starting the service (this also creates the database tables). Pick a
+strong password; this account is your break-glass login if the directory is unavailable.
+
+```bash
+set -a; . /etc/mountmgr-server/server.env; set +a
+runuser -u mmserver -- mmserver -init-admin '<a strong password>'
+systemctl enable --now mountmgr-server
+firewall-cmd --permanent --add-port=8443/tcp --add-port=8444/tcp && firewall-cmd --reload   # if firewalld is running
+```
+
+On first start the server generates its private CA, stores it in Postgres, and issues its server certificate
+(also stored, so it is stable across restarts; it is reissued only if `MM_NAMES` changes or it is close to expiry).
+
+Check it:
+
+```bash
+systemctl status mountmgr-server
+journalctl -u mountmgr-server -n 20        # expect: "generated new CA", "mmserver <version>: agent :8443 admin :8444"
+```
+
+To reset the admin password later, re-run the `-init-admin` command.
+
+### 2.4 Trust the CA, then sign in
+
+The server's HTTPS certificate is issued by the built-in **Mount Manager CA**, so clients must trust that CA.
+
+```bash
+curl -sk https://mm01.example.com:8443/v1/ca > mountmgr-ca.pem
+sha256sum mountmgr-ca.pem          # this fingerprint is used to pin agents in section 3; record it
+```
+
+Do this once on a machine you trust (ideally the server itself, `https://localhost:8443/v1/ca`) and compare the
+fingerprint elsewhere.
+
+- **CLI:** `mmctl login https://mm01.example.com:8444 admin --ca mountmgr-ca.pem` (the password is read from
+  `MM_PASSWORD` or standard input). The session is stored in `~/.mmctl.json` (mode 0600). `--insecure` skips
+  certificate checks and is for labs only.
+- **Web UI:** browse to `https://mm01.example.com:8444/`. Import `mountmgr-ca.pem` as a trusted authority in the
+  browser or OS, otherwise the browser will warn. Sessions last 12 hours; "Keep me signed in" stores the session
+  token in the browser's local storage, so untick it on shared machines.
+
+> **Limitation:** the web/admin listener currently always uses the built-in CA's certificate; there is no setting
+> yet to supply your corporate CA certificate for port 8444.
+
+### 2.5 Optional: Active Directory / LDAPS sign-in
+
+Local accounts always work. To add directory sign-in:
+
+```bash
+cd /etc/mountmgr-server
+cp ldap.json.example ldap.json        # edit: url, bind_dn, user_base, user_filter, role_map ...
+install -m 0640 -o root -g mmserver /path/to/directory-ca.pem ldap-ca.pem
+printf '%s\n' 'service-account-password' > ldap-bind.password
+chown root:mmserver ldap.json ldap-bind.password; chmod 0640 ldap.json ldap-bind.password
+```
+
+- Only `ldaps://` is accepted; the directory certificate is verified against `ca_file`.
+- `role_map` maps **direct** group membership (nested groups are not evaluated) to `admin`, `operator` or
+  `readonly`; keys are full group DNs or bare CNs, the highest matching role wins, and users with no mapped group
+  are refused.
+- **Test before enabling** (no database needed; prints the DN, groups and resolved role):
+
+  ```bash
+  set -a; . /etc/mountmgr-server/server.env; set +a
+  MM_LDAP_TEST_PASSWORD='the user password' runuser -u mmserver -- \
+      mmserver -ldap-config /etc/mountmgr-server/ldap.json -ldap-check jsmith
+  ```
+
+- Enable by uncommenting `MM_LDAP_CONFIG=/etc/mountmgr-server/ldap.json` in `server.env` and running
+  `systemctl restart mountmgr-server`. The log shows `directory login enabled`.
+
+Roles: `readonly` can view everything; `operator` can also change templates, groups, memberships and hosts;
+`admin` can also create enrolment tokens. Five failed sign-ins for one user from one address block further
+attempts for five minutes. Every sign-in, denial and failure is written to the audit log.
+
+### 2.6 Define what to mount
+
+Mounts are defined by **templates**, applied to hosts through **groups**.
+
+```bash
+# a template = one mount (types: nfs, nfs4, wekafs)
+mmctl template set data  nfs01:/export/data   /mnt/data --type nfs  --opts rw,_netdev,hard
+mmctl template set fast  weka01/fs1           /sqpc     --type wekafs --opts rw
+
+# a group = a set of templates + members; membership is by explicit host and/or hostname regex
+mmctl group set render-farm --priority 100 --regex '^render-\d+\.example\.com$'
+mmctl group ls                                 # note the group id and template ids
+mmctl group add-template <group-id> <template-id>
+```
+
+- **Priority:** if a host is in several groups that define the *same mountpoint*, the group with the higher
+  priority wins. Give overlapping groups different priorities.
+- **Regex:** unanchored Go (RE2) syntax matched against the host's name as the agent reports it (normally the
+  FQDN). Anchor with `^…$` unless you mean a substring. New hosts that match join automatically the first time
+  they poll.
+- **Changing a template** (say, a mount option) rolls out to every host using it on its next poll (within about
+  5 minutes): the agent unmounts and remounts. A mount that is busy is reported as *pending* and retried.
+- The web UI (Templates and Groups pages) does the same and previews which hosts a regex matches.
+- Where mounts are allowed is enforced **on each host** (see 3.4), not just by the server.
+
+### 2.7 Upgrades
+
+```bash
+dnf -y install ./mountmgr-server-<new>.el9.x86_64.rpm ./mountmgr-cli-<new>.el9.x86_64.rpm   # upgrades in place; restarts the service
+```
+
+Configuration files are preserved. When the packaged default of a config file changes you may find a
+`server.env.rpmnew` beside it; compare and merge by hand. The schema is upgraded automatically at start-up.
+Read `CHANGELOG.md` first for anything marked *Upgrade notes*.
+
+---
+
+## 3. Bootstrapping a new host (agent)
+
+What happens: the agent downloads the CA, proves it holds a one-time **enrolment token**, sends a certificate
+signing request, and receives a client certificate (30 days, renewed automatically over mTLS when fewer than 7
+days remain). From then on it polls every 5 minutes using that certificate, joins the groups its name matches,
+and mounts what they define.
+
+### 3.1 Prerequisites
+
+- Rocky 9+ (`nfs-utils` and `sudo` are installed as RPM dependencies).
+- The host can reach the server on TCP **8443**, and its NFS/Weka servers by name.
+- The host's name (`hostname`) is what appears in the UI and what group regexes match; use the FQDN the same way
+  everywhere. Override with `hostname=` in `agent.conf` if needed.
+- For `wekafs` mounts, the Weka client is installed separately (by Ansible today).
+
+### 3.2 Create an enrolment token (on the server, or in the UI: Enrolment → Generate token)
+
+Administrator role required.
+
+```bash
+mmctl token create --note "render farm batch 3" --hours 48 --uses 50
+```
+
+The token is printed **once** and stored only as a hash. Limit both its lifetime and its number of uses to what
+the batch needs; a leaked token lets its holder enrol a machine with any hostname until it runs out.
+
+### 3.3 Install and enrol the host
+
+```bash
+dnf -y install ./mountmgr-agent-<version>.el9.x86_64.rpm
+
+# point the agent at the server; pin the CA fingerprint from step 2.4
+sed -i 's#^server=.*#server=https://mm01.example.com:8443#' /etc/mountmgr/agent.conf
+echo 'ca_sha256=<fingerprint from 2.4>' >> /etc/mountmgr/agent.conf
+
+# drop the token where the agent looks for it (0600, owned by the service account)
+install -o mountmgr -g mountmgr -m 0600 /dev/null /var/lib/mountmgr/enroll.token
+echo '<token>' > /var/lib/mountmgr/enroll.token
+
+systemctl enable --now mountmgr-agent
+```
+
+**Pinning matters.** Without `ca_sha256` the agent trusts whatever CA the server presents on first contact and
+only logs a warning (`trust-on-first-use`). With it, the agent refuses to continue if the fingerprint differs.
+The agent deletes the token after a successful enrolment.
+
+For a fleet, bake the same three steps into your existing automation (Ansible, kickstart, image build): install
+the RPM, template `agent.conf`, drop the token file, enable the service.
+
+### 3.4 Verify
+
+On the host:
+
+```bash
+systemctl status mountmgr-agent
+grep 'mountmgr\[' /var/log/messages | tail        # enrol result=ok, mount ... result=ok
+findmnt -t nfs,nfs4                                 # (or -t wekafs)
+```
+
+On the server (or in the UI Hosts page):
+
+```bash
+mmctl host ls                    # STATUS: in-sync; PROBLEMS: empty
+mmctl host show <id>             # desired mounts vs actual state
+mmctl audit --host <hostname>    # enrol / mount / umount history
+```
+
+Expect the first mounts within seconds of the service starting. If the host matches no group it enrols but has
+nothing to mount ("No mounts are assigned to this host" in the UI).
+
+### 3.5 What the agent is allowed to do
+
+- Runs as the `mountmgr` service account, not root. `/etc/sudoers.d/mountmgr` (package-owned) permits only
+  `mount -t nfs|nfs4|wekafs`, `umount` under `/mnt`, `/data`, `/sqpc`, and `mkdir -p` in the same places.
+- **Agent-side allow-lists** in `/etc/mountmgr/agent.conf` limit what the server can make it do, regardless of
+  what is configured centrally. Defaults:
+
+  ```ini
+  allowed_mount_prefixes=/mnt,/data,/sqpc   # mounts below these paths
+  allowed_mount_exact=/sqpc                 # mounts at exactly these paths
+  allowed_fstypes=nfs,nfs4,wekafs
+  ```
+
+  To allow another location, extend **both** `agent.conf` and the sudoers rules (add a separate file in
+  `/etc/sudoers.d/`; the packaged one is replaced on upgrade). A refused mount shows in the UI as failed with the
+  reason.
+- Pre-existing mounts (for example from Ansible) at the same mountpoint are **adopted, not disturbed**, when
+  the source matches (NFS) or the type matches (wekafs); otherwise the agent replaces them to match the template.
+  It never unmounts anything it did not mount itself.
+- Every action is logged to syslog (`/var/log/messages`) as `action=… mountpoint=… result=…` and reported to
+  the server's audit log.
+
+### 3.6 Behaviour worth knowing
+
+- **Changing a mount that is in use:** the agent unmounts first, then remounts. If the unmount fails (open
+  files), the old mount is left in place, the host shows **Pending** with the reason, and the agent retries
+  every `retry_interval` (default 900 s).
+- **Server unreachable:** the agent keeps the last desired state on disk (`/var/lib/mountmgr/desired.tsv`) and
+  keeps reconciling from it, including after a reboot. A host that has never enrolled needs the server once.
+- **Mounts are not in `/etc/fstab`;** they are created by the agent after the network is up, so services that
+  need them at boot should tolerate the mounts appearing a moment after `remote-fs.target`, and `mmd` being
+  down means no mounts after a reboot.
+- **Removing a host:** `mmctl host rm <id>` (or the UI). Its certificate stops working; it must enrol again with a
+  new token to come back. Uninstalling the RPM does not unmount anything.
+
+### 3.7 Troubleshooting
+
+| Symptom (in `/var/log/messages`, `action=…`) | Likely cause and fix |
+|---|---|
+| `enroll result=failed error="no enrol token at …"` | The token file is missing or not readable by `mountmgr`; see 3.3. |
+| `enroll result=failed http=403` | Token wrong, expired or out of uses. Create a new one. |
+| `fetch-ca … fingerprint mismatch` | `ca_sha256` does not match the server's CA. Wrong server, or the CA was regenerated: re-check with `curl -sk https://<server>:8443/v1/ca \| sha256sum`. Never "fix" this by deleting the pin without finding out why. |
+| `fetch-ca result=failed http=-1`, `poll result=failed http=-1` | Cannot reach the server: DNS, firewall (8443), or the server is down. Mounts continue from the cached state. |
+| `poll … http=403` after it worked | The host was removed on the server, or its certificate was superseded. Re-enrol with a new token (stop the agent, delete `/var/lib/mountmgr/client.*`, add the token). |
+| TLS error mentioning the server name | The name in `agent.conf` is not in the server's `MM_NAMES`. Add it and restart the server. |
+| `mount … result=refused reason="not an allowed mountpoint"` / `"fstype not allowed"` | Outside the agent allow-lists (3.5). |
+| `mount … result=failed error="…"` | The mount command's own error, e.g. name resolution, `Connection timed out`, `unknown filesystem type 'wekafs'` (driver not installed). |
+| `umount … result=busy` / host shows **Pending** | Something has files open on the old mount; it is retried automatically. `fuser -vm <mountpoint>` finds the culprit. |
+| `sudo: a password is required` | `/etc/sudoers.d/mountmgr` is missing or altered, or the command is outside its rules (for example a mountpoint the sudoers file does not cover). |
+| Host enrolled but shows no mounts | It matches no group. Check the regex against the exact hostname (`mmctl host ls`), and that the group has templates. |
+
+Run the agent once in the foreground for detailed output: `systemctl stop mountmgr-agent; runuser -u mountmgr -- mmd -f -1`.
+
+---
+
+## Appendix A: Building the packages
+
+Requires the source tree, Go, Node.js and npm on the build machine, and an EL9 host with `rpm-build`, `gcc`,
+`make`, `libcurl-devel` and `openssl-devel` for `rpmbuild`.
+
+```bash
+RPM_HOST=root@el9-builder packaging/build-rpms.sh     # rpmbuild runs over ssh on that host
+# or, on an EL9 machine with the toolchain:
+packaging/build-rpms.sh
+```
+
+The script checks the version rules, runs the Go tests and the web build, builds all three RPMs at the version in
+`VERSION`, and runs the agent's mount-logic test suite during the agent build. Output: `build/rpm/`.
+It refuses to build if sources changed without a `VERSION` bump and a `CHANGELOG.md` entry.
+
+To run the database-backed server tests as well, point `MM_TEST_DSN` at any Postgres (each run uses a throwaway
+schema): `MM_TEST_DSN='postgres://…' go test ./...` from `server/`.
+
+## Appendix B: Quick reference
+
+| Task | Command |
+|------|---------|
+| Server logs | `journalctl -u mountmgr-server -f` |
+| Agent logs | `grep 'mountmgr\[' /var/log/messages` |
+| Versions | `mmserver -version`, `mmctl version`, `mmd -V` |
+| Reset the admin password | `runuser -u mmserver -- mmserver -init-admin '<new>'` (with `server.env` sourced) |
+| Test directory login | `mmserver -ldap-config … -ldap-check <user>` |
+| List hosts / one host | `mmctl host ls` / `mmctl host show <id>` |
+| Audit trail | `mmctl audit [--host name] [--limit N]` |
