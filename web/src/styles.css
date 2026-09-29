@@ -1,0 +1,89 @@
+:root {
+  --bg: #f5f6f8; --surface: #fff; --surface-2: #f0f2f5; --border: #dfe3e8; --text: #1b2430; --muted: #64707f;
+  --primary: #2563eb; --primary-fg: #fff; --ok: #15803d; --ok-bg: #dcfce7; --warn: #b45309; --warn-bg: #fef3c7;
+  --bad: #b91c1c; --bad-bg: #fee2e2; --neutral-bg: #e5e7eb; --shadow: 0 1px 2px rgba(0,0,0,.06), 0 4px 14px rgba(0,0,0,.05);
+  font-family: Inter, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 14px; color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #0f141b; --surface: #171e27; --surface-2: #1f2833; --border: #2b3644; --text: #e6ebf1; --muted: #93a1b3;
+    --primary: #4f8cff; --primary-fg: #08111f; --ok: #4ade80; --ok-bg: #12331f; --warn: #fbbf24; --warn-bg: #3a2c0c;
+    --bad: #f87171; --bad-bg: #3d1717; --neutral-bg: #2b3644; --shadow: none; color-scheme: dark; }
+}
+* { box-sizing: border-box }
+body { margin: 0; background: var(--bg); color: var(--text) }
+a { color: var(--primary); text-decoration: none } a:hover { text-decoration: underline }
+h1 { font-size: 22px; margin: 0 } h2 { font-size: 16px; margin: 0 } h3 { font-size: 13px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin: 20px 0 8px }
+.card h3:first-child { margin-top: 0 }
+.mono { font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace; font-size: 12.5px }
+.muted { color: var(--muted) } .small { font-size: 12px } .nowrap { white-space: nowrap } .wrap { word-break: break-word }
+.err-text { color: var(--bad) } .warn-text { color: var(--warn) }
+
+.shell { display: grid; grid-template-columns: 220px 1fr; min-height: 100vh }
+aside { background: var(--surface); border-right: 1px solid var(--border); padding: 16px 12px; display: flex; flex-direction: column; position: sticky; top: 0; height: 100vh }
+.brand { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 15px; padding: 4px 8px 18px }
+.brand.big { font-size: 20px; padding: 0 0 8px; justify-content: center }
+.logo { width: 24px; height: 24px; border-radius: 6px; background: var(--primary); display: inline-block; position: relative }
+.logo::after { content: ''; position: absolute; inset: 6px 5px; border-top: 2px solid #fff; border-bottom: 2px solid #fff; box-shadow: inset 0 0 0 0 #fff; background: linear-gradient(#fff,#fff) center/100% 2px no-repeat }
+nav { display: flex; flex-direction: column; gap: 2px; flex: 1 }
+nav a { padding: 9px 12px; border-radius: 8px; color: var(--text) } nav a:hover { background: var(--surface-2); text-decoration: none }
+nav a.active { background: var(--primary); color: var(--primary-fg); font-weight: 600 }
+.who { display: flex; justify-content: space-between; align-items: center; gap: 8px; border-top: 1px solid var(--border); padding-top: 12px }
+.who small { display: block; color: var(--muted) }
+main { padding: 24px 32px 48px; max-width: 1500px; width: 100%; margin: 0 auto; min-width: 0 }
+.page-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 16px }
+.page-head small { color: var(--muted) }
+
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 18px; box-shadow: var(--shadow); margin-bottom: 16px }
+.card.flush { padding: 0; overflow-x: auto } .card.narrow { max-width: 520px }
+.tiles { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-bottom: 16px }
+.tile { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 16px 18px; box-shadow: var(--shadow); border-left: 4px solid var(--border) }
+.tile span { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .05em } .tile b { display: block; font-size: 30px; margin-top: 4px }
+.tile.ok { border-left-color: var(--ok) } .tile.warn { border-left-color: var(--warn) } .tile.bad { border-left-color: var(--bad) }
+.cols { display: grid; grid-template-columns: 3fr 2fr; gap: 16px }
+.feed { list-style: none; margin: 0; padding: 0 } .feed li { padding: 8px 0; border-bottom: 1px solid var(--border) } .feed li:last-child { border: 0 }
+
+table { width: 100%; border-collapse: collapse }
+th { text-align: left; font-size: 12px; color: var(--muted); font-weight: 600; padding: 10px 14px; border-bottom: 1px solid var(--border); white-space: nowrap }
+td { padding: 10px 14px; border-bottom: 1px solid var(--border); vertical-align: top }
+tr:last-child td { border-bottom: 0 }
+table.clickable tbody tr { cursor: pointer } table.clickable tbody tr:hover, table.clickable tbody tr:focus { background: var(--surface-2); outline: none }
+td.actions { text-align: right; white-space: nowrap } td.actions button + button { margin-left: 6px }
+.empty { padding: 28px; text-align: center; color: var(--muted) }
+
+.badge { display: inline-flex; align-items: center; gap: 6px; padding: 2px 10px; border-radius: 999px; font-size: 12px; font-weight: 600; background: var(--neutral-bg); color: var(--muted); white-space: nowrap }
+.badge i { width: 7px; height: 7px; border-radius: 50%; background: currentColor }
+.b-in-sync, .b-ok { background: var(--ok-bg); color: var(--ok) } .b-pending { background: var(--warn-bg); color: var(--warn) }
+.b-offline, .b-failed { background: var(--bad-bg); color: var(--bad) }
+
+button, input, select { font: inherit; color: inherit }
+button { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 7px 14px; cursor: pointer }
+button:hover:not(:disabled) { background: var(--surface-2) } button:disabled { opacity: .5; cursor: not-allowed }
+button.primary { background: var(--primary); border-color: var(--primary); color: var(--primary-fg); font-weight: 600 } button.primary:hover:not(:disabled) { filter: brightness(1.08); background: var(--primary) }
+button.danger { color: var(--bad) } button.icon { border: 0; background: none; padding: 4px 8px }
+::placeholder { color: var(--muted); opacity: .9 }
+:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px }
+input:not([type=checkbox]), select { width: 100%; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px }
+input:disabled { background: var(--surface-2) }
+label { display: block; font-size: 12px; font-weight: 600; color: var(--muted); margin-bottom: 12px }
+label input:not([type=checkbox]), label select { margin-top: 4px; font-weight: 400; color: var(--text) }
+label.check { display: flex; align-items: center; gap: 8px; margin: 0; padding: 6px 4px; font-size: 13px; font-weight: 400; color: var(--text) } label.check.inline { display: inline-flex }
+.row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px }
+.toolbar { display: flex; gap: 10px; margin-bottom: 14px; align-items: center; flex-wrap: wrap } .toolbar input { max-width: 260px } .toolbar select { width: auto }
+.hint { font-size: 12px; color: var(--muted); font-weight: 400; margin: 4px 0 10px }
+.checks { border: 1px solid var(--border); border-radius: 8px; padding: 4px 8px; max-height: 190px; overflow: auto; margin: 8px 0 }
+.error { background: var(--bad-bg); color: var(--bad); border-radius: 8px; padding: 9px 12px; margin: 10px 0 }
+pre { background: var(--surface-2); border-radius: 8px; padding: 12px; overflow-x: auto; font-size: 12.5px }
+.kv { display: grid; grid-template-columns: 110px 1fr; gap: 6px 12px; margin: 0 0 6px } .kv dt { color: var(--muted) } .kv dd { margin: 0 }
+
+.overlay { position: fixed; inset: 0; background: rgba(8,12,18,.55); display: flex; align-items: flex-start; justify-content: center; padding: 6vh 16px; overflow: auto; z-index: 10 }
+.modal { background: var(--surface); border-radius: 14px; width: 100%; max-width: 520px; padding: 20px 22px; box-shadow: 0 20px 60px rgba(0,0,0,.35) } .modal.wide { max-width: 820px }
+.modal > header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px }
+.modal footer, form footer { display: flex; justify-content: flex-end; gap: 10px; margin-top: 18px }
+.toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); background: var(--text); color: var(--bg); padding: 10px 18px; border-radius: 8px; z-index: 20 }
+.login-wrap { min-height: 100vh; display: grid; place-items: center; padding: 16px } .login { width: 100%; max-width: 360px; padding: 28px } .login button { width: 100%; margin-top: 8px; padding: 10px }
+
+@media (max-width: 860px) {
+  .shell { grid-template-columns: 1fr } aside { position: static; height: auto; flex-direction: row; flex-wrap: wrap; align-items: center; padding: 8px }
+  .brand { padding: 4px 8px } nav { flex-direction: row; flex-wrap: wrap; flex-basis: 100%; order: 3 } .who { border: 0; padding: 0; margin-left: auto }
+  main { padding: 16px } .tiles { grid-template-columns: repeat(2, 1fr) } .cols, .row2 { grid-template-columns: 1fr }
+}
