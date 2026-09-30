@@ -6,6 +6,7 @@ require (
 	github.com/go-ldap/ldap/v3 v3.4.14
 	github.com/jackc/pgx/v5 v5.11.0
 	golang.org/x/crypto v0.57.0
+	golang.org/x/term v0.46.0
 )
 
 require (

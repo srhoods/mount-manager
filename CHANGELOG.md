@@ -5,6 +5,16 @@ Versioning: one `VERSION` for the agent, server and CLI RPMs. Bump the **minor**
 unchanged version, and requires a `## <version>` entry here. The RPM *Release* only changes for packaging-only
 respins (it is 1 for every new version).
 
+## 0.3.4
+### Fixed
+- `mmserver -ldap-check` appeared to hang: with no `MM_LDAP_TEST_PASSWORD` it silently waited for a password on standard
+  input. It now prompts for the password (without echo) on a terminal, and prints each step it takes (connect, TLS, service
+  bind, user search, group search, password check), so a slow or failing directory is visible and each step is bounded by
+  `timeout_seconds`.
+- `mmserver -ldap-config -ldap-check <user>` (path left out) made the flag parser take `-ldap-check` as the config path and
+  start the real server instead of running the check. A flag given where a path is expected is now rejected with usage.
+- Install guide: where `ldap-ca.pem` comes from, and how to read the check output.
+
 ## 0.3.3
 ### Fixed
 - Web UI: the host dialog now reloads its data if a different host is opened while it is showing (it could keep

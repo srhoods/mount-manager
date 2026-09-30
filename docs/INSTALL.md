@@ -243,13 +243,39 @@ chown root:mmserver ldap.json ldap-bind.password; chmod 0640 ldap.json ldap-bind
 - `role_map` maps **direct** group membership (nested groups are not evaluated) to `admin`, `operator` or
   `readonly`; keys are full group DNs or bare CNs, the highest matching role wins, and users with no mapped group
   are refused.
-- **Test before enabling** (no database needed; prints the DN, groups and resolved role):
+- **Where `ldap-ca.pem` comes from.** It is the certificate of the CA that signed your domain controllers' LDAPS
+  certificates, in PEM (Base-64) form. It is not produced by Mount Manager. Ask your PKI or AD team for the root (and any
+  intermediate) CA certificates, or export them from a domain-joined Windows machine (`certmgr.msc` → Trusted Root
+  Certification Authorities → Export → "Base-64 encoded X.509"). Several certificates can be concatenated in one file, and a
+  binary `.cer` converts with `openssl x509 -inform der -in corp-root.cer -out ldap-ca.pem`. As a last resort, read it from the
+  domain controller with `openssl s_client -connect dc1.corp.example.com:636 -showcerts </dev/null` and take the *CA*
+  certificates of the chain (not the first, the server's own), after checking the fingerprint with your PKI team. If your
+  corporate CA is already in the operating system's trust store, omit `ca_file` and the system roots are used.
+- **Test before enabling** (no database needed). It prompts for the user's password without echoing it, then reports each
+  step, so a slow or failing directory is visible rather than silent. It prints the DN, groups and resolved role:
 
   ```bash
   set -a; . /etc/mountmgr-server/server.env; set +a
-  MM_LDAP_TEST_PASSWORD='the user password' runuser -u mmserver -- \
-      mmserver -ldap-config /etc/mountmgr-server/ldap.json -ldap-check jsmith
+  runuser -u mmserver -- mmserver -ldap-config /etc/mountmgr-server/ldap.json -ldap-check jsmith
   ```
+
+  ```
+  Password for jsmith:
+    - connecting to ldaps://dc1.corp.example.com:636 (TLS verified against /etc/mountmgr-server/ldap-ca.pem, 10s timeout per step)
+    - connected; TLS handshake and certificate verification succeeded
+    - binding as service account CN=svc-mountmgr,...
+    - searching DC=corp,DC=example,DC=com with filter (&(objectClass=user)(sAMAccountName=jsmith))
+    - found CN=John Smith,OU=Users,...
+    - verifying the password by binding as CN=John Smith,OU=Users,...
+  Role:   admin
+  OK
+  ```
+
+  The path after `-ldap-config` is required. For scripts, set `MM_LDAP_TEST_PASSWORD` or pipe the password in on standard input.
+  Where it stops tells you what to fix: no `connecting…` result means DNS, routing or a firewall on port 636; a
+  certificate error means `ca_file` or the name in `url` (use `server_name` if the certificate carries a different name);
+  `service bind failed` means `bind_dn` or its password; `matched 0 entries` means `user_base` or `user_filter`; `not a member
+  of any group mapped to a role` means `role_map`.
 
 - Enable by uncommenting `MM_LDAP_CONFIG=/etc/mountmgr-server/ldap.json` in `server.env` and running
   `systemctl restart mountmgr-server`. The log shows `directory login enabled`.

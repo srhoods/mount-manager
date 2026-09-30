@@ -1,6 +1,12 @@
 package auth
 
-import "testing"
+import (
+	"errors"
+	"fmt"
+	"strings"
+	"testing"
+	"time"
+)
 
 func TestResolveRole(t *testing.T) {
 	rm := map[string]string{
@@ -58,5 +64,27 @@ func TestEmptyPasswordRejectedWithoutDialling(t *testing.T) {
 		if _, err := l.Authenticate(in[0], in[1]); err != ErrInvalidCredentials {
 			t.Errorf("%v: got %v want ErrInvalidCredentials", in, err)
 		}
+	}
+}
+
+func TestTraceReportsProgressAndFailsFast(t *testing.T) {
+	c := Config{URL: "ldaps://127.0.0.1:1", UserBase: "x", RoleMap: map[string]string{"g": "admin"}, TimeoutSeconds: 3}
+	l, err := New(&c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var lines []string
+	l.Trace = func(f string, a ...any) { lines = append(lines, fmt.Sprintf(f, a...)) }
+	start := time.Now()
+	_, err = l.Authenticate("bob", "pw")
+	var de *DirectoryError
+	if !errors.As(err, &de) {
+		t.Fatalf("want a DirectoryError, got %v", err)
+	}
+	if time.Since(start) > 5*time.Second {
+		t.Errorf("unreachable directory must fail within the timeout, took %s", time.Since(start))
+	}
+	if len(lines) == 0 || !strings.Contains(lines[0], "connecting to ldaps://127.0.0.1:1") {
+		t.Errorf("progress not reported: %v", lines)
 	}
 }

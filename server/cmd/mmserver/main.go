@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"github.com/rhoods/mountmanager/internal/auth"
 	"github.com/rhoods/mountmanager/internal/db"
+	"golang.org/x/term"
 	"io"
 	"log"
 	"net/http"
@@ -46,6 +47,9 @@ func main() {
 		return
 	}
 
+	if strings.HasPrefix(*ldapCfg, "-") {
+		log.Fatalf("-ldap-config needs a file path but was given %q.\nUsage: mmserver -ldap-config /etc/mountmgr-server/ldap.json -ldap-check <username>", *ldapCfg)
+	}
 	if *ldapCheck != "" {
 		os.Exit(checkLDAP(*ldapCfg, *ldapCheck))
 	}
@@ -161,8 +165,20 @@ func checkLDAP(path, user string) int {
 	if err == nil {
 		var d *auth.LDAP
 		if d, err = auth.New(cfg); err == nil {
+			d.Trace = func(f string, a ...any) { fmt.Fprintf(os.Stderr, "  - "+f+"\n", a...) }
 			pw := os.Getenv("MM_LDAP_TEST_PASSWORD")
-			if pw == "" {
+			switch {
+			case pw != "":
+			case term.IsTerminal(int(os.Stdin.Fd())):
+				fmt.Fprintf(os.Stderr, "Password for %s: ", user)
+				b, perr := term.ReadPassword(int(os.Stdin.Fd()))
+				fmt.Fprintln(os.Stderr)
+				if perr != nil {
+					fmt.Fprintf(os.Stderr, "reading password: %v\n", perr)
+					return 2
+				}
+				pw = string(b)
+			default: // piped: read it from standard input
 				b, _ := io.ReadAll(os.Stdin)
 				pw = strings.TrimRight(string(b), "\r\n")
 			}

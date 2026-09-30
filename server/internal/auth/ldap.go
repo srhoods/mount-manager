@@ -50,6 +50,14 @@ type Result struct {
 type LDAP struct {
 	cfg Config
 	tls *tls.Config
+	// Trace, when set, receives a line per step (used by `mmserver -ldap-check` so a slow or failing directory is visible).
+	Trace func(format string, args ...any)
+}
+
+func (l *LDAP) tracef(format string, args ...any) {
+	if l.Trace != nil {
+		l.Trace(format, args...)
+	}
 }
 
 func LoadConfig(path string) (*Config, error) {
@@ -139,17 +147,23 @@ func (l *LDAP) Authenticate(user, password string) (*Result, error) {
 	if user == "" || password == "" || len(user) > 256 || len(password) > 1024 {
 		return nil, ErrInvalidCredentials
 	}
+	l.tracef("connecting to %s (TLS verified against %s, %ds timeout per step)", l.cfg.URL, l.caDescription(), l.cfg.TimeoutSeconds)
 	c, err := l.dial()
 	if err != nil {
 		return nil, &DirectoryError{err}
 	}
 	defer c.Close()
+	l.tracef("connected; TLS handshake and certificate verification succeeded")
 
 	if l.cfg.BindDN != "" {
+		l.tracef("binding as service account %s", l.cfg.BindDN)
 		if err := c.Bind(l.cfg.BindDN, l.cfg.BindPassword); err != nil {
 			return nil, &DirectoryError{fmt.Errorf("service bind failed: %w", err)}
 		}
+	} else {
+		l.tracef("no bind_dn configured: searching anonymously")
 	}
+	l.tracef("searching %s with filter %s", l.cfg.UserBase, fmt.Sprintf(l.cfg.UserFilter, ldap.EscapeFilter(user)))
 	attrs := []string{"dn", l.cfg.GroupAttr}
 	sr, err := c.Search(ldap.NewSearchRequest(l.cfg.UserBase, ldap.ScopeWholeSubtree, ldap.NeverDerefAliases, 2, l.cfg.TimeoutSeconds, false,
 		fmt.Sprintf(l.cfg.UserFilter, ldap.EscapeFilter(user)), attrs, nil))
@@ -157,12 +171,15 @@ func (l *LDAP) Authenticate(user, password string) (*Result, error) {
 		return nil, &DirectoryError{fmt.Errorf("user search failed: %w", err)}
 	}
 	if len(sr.Entries) != 1 { // none, or ambiguous
+		l.tracef("user search matched %d entries (need exactly 1): check user_base and user_filter", len(sr.Entries))
 		return nil, ErrInvalidCredentials
 	}
 	dn := sr.Entries[0].DN
+	l.tracef("found %s", dn)
 	groups := append([]string{}, sr.Entries[0].GetAttributeValues(l.cfg.GroupAttr)...)
 
 	if l.cfg.GroupFilter != "" {
+		l.tracef("searching groups under %s", l.cfg.GroupBase)
 		gs, err := c.Search(ldap.NewSearchRequest(l.cfg.GroupBase, ldap.ScopeWholeSubtree, ldap.NeverDerefAliases, 0, l.cfg.TimeoutSeconds, false,
 			fmt.Sprintf(l.cfg.GroupFilter, ldap.EscapeFilter(dn)), []string{"dn"}, nil))
 		if err != nil {
@@ -173,6 +190,7 @@ func (l *LDAP) Authenticate(user, password string) (*Result, error) {
 		}
 	}
 	// Verify the user's password last, on the same connection.
+	l.tracef("verifying the password by binding as %s", dn)
 	if err := c.Bind(dn, password); err != nil {
 		if ldap.IsErrorWithCode(err, ldap.LDAPResultInvalidCredentials) {
 			return nil, ErrInvalidCredentials
@@ -184,6 +202,13 @@ func (l *LDAP) Authenticate(user, password string) (*Result, error) {
 		return &Result{DN: dn, Groups: groups}, ErrNoRole
 	}
 	return &Result{DN: dn, Groups: groups, Role: role}, nil
+}
+
+func (l *LDAP) caDescription() string {
+	if l.cfg.CAFile != "" {
+		return l.cfg.CAFile
+	}
+	return "the system trust store"
 }
 
 // DirectoryError wraps connectivity/configuration failures (not the user's fault).
