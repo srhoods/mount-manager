@@ -31,9 +31,9 @@
 
 struct cfg {
 	char server[256], state_dir[256], token_file[256], allowed[256], allowed_exact[256], allowed_fst[128], ca_sha256[80];
-	char hostname[256];
+	char hostname[256], server_ca[256];
 	int interval, retry, use_sudo, mount_timeout;
-} C = {"", "/var/lib/mountmgr", "/var/lib/mountmgr/enroll.token", "/mnt,/data,/sqpc", "/sqpc", "nfs,nfs4,wekafs", "", "",
+} C = {"", "/var/lib/mountmgr", "/var/lib/mountmgr/enroll.token", "/mnt,/data,/sqpc", "/sqpc", "nfs,nfs4,wekafs", "", "", "",
        300, 900, 0, 60};
 
 static const char *mountinfo_path = "/proc/self/mountinfo"; /* overridable for tests */
@@ -49,7 +49,7 @@ static char rev[32];
 static time_t last_try[MAXM];  /* parallel to want[] retry gating */
 static char last_state[MAXM][16], last_err[MAXM][256];
 static volatile sig_atomic_t stop;
-static char path_key[300], path_crt[300], path_ca[300], path_desired[300], path_applied[300];
+static char path_key[300], path_crt[300], path_ca[300], path_trust[300], path_desired[300], path_applied[300];
 
 static void logf_(int pri, const char *action, const char *fmt, ...)
 {
@@ -80,7 +80,7 @@ static int load_cfg(const char *path)
 #define S(k,fld) if(!strcmp(line,k)) snprintf(C.fld,sizeof C.fld,"%s",v)
 #define I(k,fld) if(!strcmp(line,k)) C.fld=atoi(v)
 		S("server",server); S("state_dir",state_dir); S("enroll_token_file",token_file);
-		S("allowed_mount_prefixes",allowed); S("allowed_mount_exact",allowed_exact); S("allowed_fstypes",allowed_fst); S("ca_sha256",ca_sha256); S("hostname",hostname);
+		S("allowed_mount_prefixes",allowed); S("allowed_mount_exact",allowed_exact); S("allowed_fstypes",allowed_fst); S("ca_sha256",ca_sha256); S("hostname",hostname); S("server_ca_file",server_ca);
 		I("interval",interval); I("retry_interval",retry); I("use_sudo",use_sudo); I("mount_timeout",mount_timeout);
 	}
 	fclose(f); return 0;
@@ -146,6 +146,33 @@ static size_t hcb(char *p, size_t s, size_t n, void *u)
 	return l;
 }
 
+/* Which CAs verify the server. Default: the built-in CA fetched at first contact. With server_ca_file (a CA bundle,
+ * or "system" for the OS trust store) the agent trusts that CA *and* the built-in CA it already holds, so the same
+ * agent works before and after the server switches to a certificate from your own CA. libcurl in EL9 only takes a
+ * file, so the two are combined into <state_dir>/trust.pem. */
+static int build_trust(void);
+
+static const char *cainfo(void)
+{
+	if (!C.server_ca[0]) return path_ca;
+	if (access(path_trust, R_OK) != 0) build_trust();   /* first contact (enrolment) happens before any polling cycle */
+	return path_trust;
+}
+
+static int build_trust(void)
+{
+	const char *ext = !strcmp(C.server_ca, "system") ? "/etc/pki/tls/certs/ca-bundle.crt" : C.server_ca;
+	char *a, *b, *buf; int rc;
+	if (!C.server_ca[0]) return 0;
+	if (!(a = readfile(ext))) { logf_(LOG_ERR, "trust", "result=failed error=\"cannot read server_ca_file %s\"", ext); return -1; }
+	b = readfile(path_ca);
+	buf = malloc(strlen(a) + (b ? strlen(b) : 0) + 4);
+	sprintf(buf, "%s\n%s\n", a, b ? b : "");
+	rc = writefile(path_trust, buf, 0644);
+	free(a); free(b); free(buf);
+	return rc;
+}
+
 /* mode: 0 = mTLS with client cert; 1 = server-auth only (verify with CA); 2 = no verification (bootstrap CA fetch) */
 static long http(const char *method, const char *path, const char *body, const char *inm, int mode, struct buf *out)
 {
@@ -156,7 +183,7 @@ static long http(const char *method, const char *path, const char *body, const c
 	curl_easy_setopt(c, CURLOPT_WRITEFUNCTION, wcb); curl_easy_setopt(c, CURLOPT_WRITEDATA, out);
 	curl_easy_setopt(c, CURLOPT_HEADERFUNCTION, hcb);
 	if (mode == 2) { curl_easy_setopt(c, CURLOPT_SSL_VERIFYPEER, 0L); curl_easy_setopt(c, CURLOPT_SSL_VERIFYHOST, 0L); }
-	else curl_easy_setopt(c, CURLOPT_CAINFO, path_ca);
+	else if (cainfo()) curl_easy_setopt(c, CURLOPT_CAINFO, cainfo());
 	if (mode == 0) {
 		curl_easy_setopt(c, CURLOPT_SSLCERT, path_crt); curl_easy_setopt(c, CURLOPT_SSLKEY, path_key);
 	}
@@ -469,6 +496,7 @@ static int report(void)
 
 static void cycle(void)
 {
+	if (C.server_ca[0]) build_trust();   /* pick up rotated CA bundles */
 	struct buf b = {0}; long code; char inm[64] = "";
 	int d = cert_days_left();
 	if (d >= 0 && d < 7) enroll(1);
@@ -506,16 +534,19 @@ int main(int argc, char **argv)
 	snprintf(path_key, sizeof path_key, "%s/client.key", C.state_dir);
 	snprintf(path_crt, sizeof path_crt, "%s/client.crt", C.state_dir);
 	snprintf(path_ca, sizeof path_ca, "%s/ca.crt", C.state_dir);
+	snprintf(path_trust, sizeof path_trust, "%s/trust.pem", C.state_dir);
 	snprintf(path_desired, sizeof path_desired, "%s/desired.tsv", C.state_dir);
 	snprintf(path_applied, sizeof path_applied, "%s/applied.tsv", C.state_dir);
 	curl_global_init(CURL_GLOBAL_DEFAULT); srand(getpid() ^ time(NULL));
 	signal(SIGTERM, onsig); signal(SIGINT, onsig);
 	if (!fg && !once && daemon(0, 0) < 0) return 1;
 	logf_(LOG_NOTICE, "start", "version=%s server=%s interval=%d", VERSION, C.server, C.interval);
+	if (C.server_ca[0] && strcmp(C.server_ca, "system") && access(C.server_ca, R_OK) != 0)
+		logf_(LOG_ERR, "start", "server_ca_file=%s is not readable; TLS verification will fail", C.server_ca);
 	load_applied();
 	if ((cached = readfile(path_desired))) { parse_desired(cached); free(cached); /* keep cached state so we can reconcile while offline */ }
 	while (!stop) {
-		if (access(path_ca, R_OK) != 0 && fetch_ca() < 0) goto sleep;
+		if (!C.server_ca[0] && access(path_ca, R_OK) != 0 && fetch_ca() < 0) goto sleep;   /* built-in CA: fetch once, pinned */
 		if (access(path_crt, R_OK) != 0 && enroll(0) < 0) goto sleep;
 		cycle();
 sleep:

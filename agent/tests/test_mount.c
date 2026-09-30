@@ -276,7 +276,7 @@ TEST(mountpoint_allow_list)
 TEST(sqpc_default_paths)
 {
 	struct cfg saved = C;
-	struct cfg def = { "", "", "", "/mnt,/data,/sqpc", "/sqpc", "nfs,nfs4,wekafs", "", "", 300, 900, 0, 60 };
+	struct cfg def = { "", "", "", "/mnt,/data,/sqpc", "/sqpc", "nfs,nfs4,wekafs", "", "", "", 300, 900, 0, 60 };
 	C = def;
 	CHECK(allowed_path("/sqpc"));                     /* exact */
 	CHECK(allowed_path("/sqpc/projects"));            /* below */
@@ -355,15 +355,40 @@ TEST(json_escape_handles_quotes_and_newlines)
 	CHECK_STR(e, "a\\\"b\\\\c\\nd"); free(e);
 }
 
+TEST(server_trust_selection)
+{
+	char ext[400], builtin[400], out[400], *pem;
+	snprintf(ext, sizeof ext, "%s/corp-ca.pem", T); snprintf(builtin, sizeof builtin, "%s/state/ca.crt", T);
+	snprintf(path_ca, sizeof path_ca, "%s", builtin); snprintf(path_trust, sizeof path_trust, "%s/state/trust.pem", T);
+	sh("printf 'CORP-CA\\n' > %s; printf 'BUILTIN-CA\\n' > %s", ext, builtin);
+	C.server_ca[0] = 0;
+	CHECK_STR(cainfo(), builtin);                               /* default: only the built-in CA */
+	CHECK(build_trust() == 0);                                  /* and nothing is generated */
+	snprintf(C.server_ca, sizeof C.server_ca, "%s", ext);
+	sh("rm -f %s", path_trust);
+	CHECK_STR(cainfo(), path_trust);                            /* external CA configured: use the combined file ... */
+	CHECK(access(path_trust, R_OK) == 0);                       /* ... built on demand, so a brand-new host can enrol */
+	CHECK(build_trust() == 0);
+	snprintf(out, sizeof out, "%s", path_trust); pem = readfile(out);
+	CHECK(pem && strstr(pem, "CORP-CA") && strstr(pem, "BUILTIN-CA"));   /* trusts both: safe in either migration order */
+	free(pem);
+	sh("rm -f %s", builtin);                                    /* a new host that never fetched the built-in CA */
+	CHECK(build_trust() == 0);
+	pem = readfile(out); CHECK(pem && strstr(pem, "CORP-CA") && !strstr(pem, "BUILTIN-CA")); free(pem);
+	snprintf(C.server_ca, sizeof C.server_ca, "%s/missing.pem", T);
+	CHECK(build_trust() < 0);                                   /* unreadable bundle is reported, not ignored */
+}
+
 TEST(config_parsing)
 {
 	char p[400]; FILE *f;
 	snprintf(p, sizeof p, "%s/agent.conf", T); f = fopen(p, "w");
-	fputs("# comment\nserver=https://x:8443\ninterval=60\nuse_sudo=1\nallowed_mount_prefixes=/a,/b\nallowed_mount_exact=/c\nallowed_fstypes=nfs,wekafs\n", f); fclose(f);
+	fputs("# comment\nserver=https://x:8443\ninterval=60\nuse_sudo=1\nallowed_mount_prefixes=/a,/b\nallowed_mount_exact=/c\nallowed_fstypes=nfs,wekafs\nserver_ca_file=/etc/pki/corp-ca.pem\n", f); fclose(f);
 	CHECK(load_cfg(p) == 0);
 	CHECK_STR(C.server, "https://x:8443"); CHECK(C.interval == 60); CHECK(C.use_sudo == 1);
 	CHECK(allowed_path("/a/x") && allowed_path("/c") && !allowed_path("/d"));
 	CHECK(allowed_fstype("wekafs") && !allowed_fstype("nfs4"));
+	CHECK_STR(C.server_ca, "/etc/pki/corp-ca.pem");
 	CHECK(load_cfg("/nonexistent/agent.conf") < 0);
 }
 
@@ -396,6 +421,7 @@ int main(void)
 	RUN(commands_run_through_sudo_when_configured);
 	RUN(stacked_mounts_last_wins);
 	RUN(json_escape_handles_quotes_and_newlines);
+	RUN(server_trust_selection);
 	RUN(config_parsing);
 	printf("%d checks, %d failures\n", checks, failures);
 	return failures ? 1 : 0;
