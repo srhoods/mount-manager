@@ -1,31 +1,31 @@
 import { api } from '../api'
-import { Badge, Empty, ErrorBox, fmtTime, hostState, timeAgo, useLoad } from '../ui'
+import { Badge, Empty, ErrorBox, fmtTime, timeAgo, useLoad } from '../ui'
 
 export default function Dashboard() {
-  const hosts = useLoad(api.hosts, 30000)
+  const summary = useLoad(api.hostSummary, 30000)
+  const attention = useLoad(() => api.hosts({ state: 'attention', limit: 15 }), 30000)
   const audit = useLoad(() => api.audit('', 12), 30000)
-  const hs = hosts.data ?? []
-  const count = (s: string) => hs.filter(h => hostState(h) === s).length
-  const attention = hs.filter(h => hostState(h) !== 'in-sync')
+  const sm = summary.data
   const tiles: [string, number, string][] = [
-    ['Hosts', hs.length, ''], ['In sync', count('in-sync'), 'ok'], ['Pending changes', count('pending'), 'warn'], ['Offline', count('offline'), 'bad'],
+    ['Hosts', sm?.total ?? 0, ''], ['In sync', sm?.in_sync ?? 0, 'ok'], ['Pending changes', sm?.pending ?? 0, 'warn'], ['Offline', sm?.offline ?? 0, 'bad'],
   ]
   return (
     <>
       <div className="page-head"><h1>Dashboard</h1><small>Refreshes every 30s</small></div>
-      <ErrorBox err={hosts.error} />
+      <ErrorBox err={summary.error || attention.error} />
       <div className="tiles">{tiles.map(([l, n, k]) => <div key={l} className={`tile ${k}`}><span>{l}</span><b>{n}</b></div>)}</div>
       <div className="cols">
         <section className="card">
           <h3>Needs attention</h3>
-          {!hosts.data ? <Empty>Loading…</Empty> : attention.length === 0 ? <Empty>All hosts are in sync.</Empty> : (
+          {!attention.data ? <Empty>Loading…</Empty> : attention.data.items.length === 0 ? <Empty>All hosts are in sync.</Empty> : (
             <table><thead><tr><th>Host</th><th>State</th><th>Detail</th></tr></thead><tbody>
-              {attention.slice(0, 15).map(h => (
-                <tr key={h.id}><td><a href="#/hosts">{h.hostname}</a></td><td><Badge kind={hostState(h)} /></td>
-                  <td className="muted wrap">{hostState(h) === 'offline' ? `Last seen ${timeAgo(h.last_seen)}` : h.problems || '—'}</td></tr>
+              {attention.data.items.map(h => (
+                <tr key={h.id}><td className="nowrap"><a href="#/hosts">{h.hostname}</a></td><td><Badge kind={h.state} /></td>
+                  <td className="muted wrap">{h.state === 'offline' ? `Last seen ${timeAgo(h.last_seen)}` : h.problems || '—'}</td></tr>
               ))}
             </tbody></table>
           )}
+          {attention.data && attention.data.total > attention.data.items.length && <p className="muted small more"><a href="#/hosts">{(attention.data.total - attention.data.items.length).toLocaleString()} more…</a></p>}
         </section>
         <section className="card">
           <h3>Recent activity</h3>

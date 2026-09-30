@@ -1,5 +1,5 @@
 import { FormEvent, useMemo, useState } from 'react'
-import { api, Group, Host, Template } from '../api'
+import { api, Group, HostBrief, Template } from '../api'
 import { Empty, ErrorBox, Modal, useLoad, useToast } from '../ui'
 
 function compile(rx: string): RegExp | null | 'invalid' {
@@ -8,7 +8,7 @@ function compile(rx: string): RegExp | null | 'invalid' {
 }
 
 function Editor({ initial, groups, templates, hosts, onClose, onSaved }: {
-  initial: Group | null; groups: Group[]; templates: Template[]; hosts: Host[]; onClose: () => void; onSaved: () => void
+  initial: Group | null; groups: Group[]; templates: Template[]; hosts: HostBrief[]; onClose: () => void; onSaved: () => void
 }) {
   const [name, setName] = useState(initial?.name ?? '')
   const [prio, setPrio] = useState(initial?.priority ?? 100)
@@ -81,7 +81,7 @@ function Editor({ initial, groups, templates, hosts, onClose, onSaved }: {
 export default function Groups({ canWrite }: { canWrite: boolean }) {
   const g = useLoad(api.groups)
   const t = useLoad(api.templates)
-  const h = useLoad(api.hosts)
+  const h = useLoad(api.hostNames)
   const [edit, setEdit] = useState<Group | null | 'new'>(null)
   const { toast, show } = useToast()
   const del = async (x: Group) => {

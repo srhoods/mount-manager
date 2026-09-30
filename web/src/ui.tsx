@@ -1,5 +1,4 @@
-import { ReactNode, useCallback, useEffect, useRef, useState } from 'react'
-import type { Host } from './api'
+import { Component, ErrorInfo, ReactNode, useCallback, useEffect, useRef, useState } from 'react'
 
 export function timeAgo(ts: string | null): string {
   if (!ts) return 'never'
@@ -11,19 +10,16 @@ export function timeAgo(ts: string | null): string {
 }
 export const fmtTime = (ts: string) => new Date(ts).toLocaleString()
 
-// A host that has not polled for 3 intervals (default 5 min) is treated as offline.
-export const isStale = (h: Host) => !h.last_seen || Date.now() - new Date(h.last_seen).getTime() > 15 * 60 * 1000
-export function hostState(h: Host): 'offline' | 'pending' | 'in-sync' | 'unknown' {
-  if (isStale(h)) return 'offline'
-  return h.status
+// State labels are upper case everywhere they are shown.
+const LABEL: Record<string, string> = {
+  offline: 'OFFLINE', pending: 'PENDING', 'in-sync': 'IN SYNC', unknown: 'UNKNOWN', ok: 'OK', failed: 'FAILED',
+  active: 'ACTIVE', expired: 'EXPIRED', used: 'USED UP', revoked: 'REVOKED',
 }
-
-const LABEL: Record<string, string> = { offline: 'Offline', pending: 'Pending', 'in-sync': 'In sync', unknown: 'Unknown', ok: 'OK', failed: 'Failed' }
 export function Badge({ kind }: { kind: string }) {
-  return <span className={`badge b-${kind}`}><i />{LABEL[kind] ?? kind}</span>
+  return <span className={`badge b-${kind}`}><i />{LABEL[kind] ?? kind.toUpperCase()}</span>
 }
 
-export function Modal({ title, onClose, children, wide }: { title: string; onClose: () => void; children: ReactNode; wide?: boolean }) {
+export function Modal({ title, onClose, children, wide, xl }: { title: string; onClose: () => void; children: ReactNode; wide?: boolean; xl?: boolean }) {
   useEffect(() => {
     const h = (e: KeyboardEvent) => e.key === 'Escape' && onClose()
     window.addEventListener('keydown', h)
@@ -31,7 +27,7 @@ export function Modal({ title, onClose, children, wide }: { title: string; onClo
   }, [onClose])
   return (
     <div className="overlay" onMouseDown={e => e.target === e.currentTarget && onClose()}>
-      <div className={`modal${wide ? ' wide' : ''}`} role="dialog" aria-modal="true" aria-label={title}>
+      <div className={`modal${wide ? ' wide' : ''}${xl ? ' xl' : ''}`} role="dialog" aria-modal="true" aria-label={title}>
         <header><h2>{title}</h2><button className="icon" aria-label="Close" onClick={onClose}>✕</button></header>
         {children}
       </div>
@@ -62,4 +58,34 @@ export function useToast() {
   const [msg, setMsg] = useState<string | null>(null)
   const show = useCallback((m: string) => { setMsg(m); setTimeout(() => setMsg(null), 3000) }, [])
   return { toast: msg ? <div className="toast" role="status">{msg}</div> : null, show }
+}
+
+/** "3d 4h", "5h 12m", "9m", "<1m" */
+export function duration(secs: number): string {
+  if (secs <= 0) return '—'
+  if (secs < 60) return '<1m'
+  const d = Math.floor(secs / 86400), h = Math.floor((secs % 86400) / 3600), m = Math.floor((secs % 3600) / 60)
+  if (d > 0) return `${d}d ${h}h`
+  if (h > 0) return `${h}h ${m}m`
+  return `${m}m`
+}
+
+/** Turns a render error into a message with a way out, instead of a blank page. */
+export class ErrorBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
+  state = { error: null as Error | null }
+  static getDerivedStateFromError(error: Error) { return { error } }
+  componentDidCatch(error: Error, info: ErrorInfo) { console.error('UI error:', error, info.componentStack) }
+  render() {
+    if (!this.state.error) return this.props.children
+    return (
+      <div className="login-wrap">
+        <div className="card login" role="alert">
+          <h2>Something went wrong</h2>
+          <p className="muted">The page hit an unexpected error. Your session is unaffected.</p>
+          <pre className="small">{this.state.error.message}</pre>
+          <button className="primary" onClick={() => { this.setState({ error: null }); location.reload() }}>Reload</button>
+        </div>
+      </div>
+    )
+  }
 }

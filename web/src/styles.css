@@ -87,3 +87,36 @@ pre { background: var(--surface-2); border-radius: 8px; padding: 12px; overflow-
   .brand { padding: 4px 8px } nav { flex-direction: row; flex-wrap: wrap; flex-basis: 100%; order: 3 } .who { border: 0; padding: 0; margin-left: auto }
   main { padding: 16px } .tiles { grid-template-columns: repeat(2, 1fr) } .cols, .row2 { grid-template-columns: 1fr }
 }
+
+/* host detail: use the width of the window instead of a narrow column */
+.modal.xl { max-width: min(1500px, 96vw) }
+.overlay:has(.modal.xl) { padding: 4vh 2vw }
+.scroll-x { overflow-x: auto }
+table.fit { width: 100% }
+table.fit td.wrap { min-width: 24em }
+.facts { display: flex; flex-wrap: wrap; gap: 8px 40px; margin: 0 0 4px }
+.facts > div { display: flex; flex-direction: column; gap: 2px }
+.facts dt { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .05em }
+.facts dd { margin: 0 }
+
+/* pagination */
+.pager { display: flex; align-items: center; gap: 14px; padding: 10px 14px; border-top: 1px solid var(--border); flex-wrap: wrap }
+.pager .spacer { flex: 1 }
+.pager label.inline { display: inline-flex; align-items: center; gap: 8px; margin: 0; font-weight: 400 }
+.pager label.inline select { width: auto; margin: 0 }
+.pager-nav { display: flex; align-items: center; gap: 6px }
+.pager-pos { padding: 0 8px; white-space: nowrap }
+
+/* enrolment tokens */
+.page-head.sub { margin: 24px 0 10px } .page-head.sub h2 { font-size: 16px }
+tr.dim td { opacity: .6 }
+.uses { display: flex; align-items: center; gap: 10px; white-space: nowrap }
+.bar { display: inline-block; width: 70px; height: 6px; background: var(--neutral-bg); border-radius: 3px; overflow: hidden }
+.bar i { display: block; height: 100%; background: var(--primary) }
+.more { padding: 8px 0 0; margin: 0 }
+.b-active { background: var(--ok-bg); color: var(--ok) }
+.b-revoked { background: var(--bad-bg); color: var(--bad) }
+
+/* long lists scroll inside the card with a sticky header, so the pager stays on screen at any page size */
+.table-scroll { max-height: calc(100vh - 260px); min-height: 200px; overflow: auto }
+.table-scroll thead th { position: sticky; top: 0; background: var(--surface); z-index: 1; box-shadow: 0 1px 0 var(--border) }

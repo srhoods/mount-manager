@@ -1,4 +1,13 @@
-export interface Host { id: number; hostname: string; agent_version: string; last_seen: string | null; status: 'in-sync' | 'pending' | 'unknown'; problems: string }
+export type HostState = 'in-sync' | 'pending' | 'offline' | 'unknown'
+export interface Host { id: number; hostname: string; agent_version: string; last_seen: string | null; state: HostState; problems: string }
+export interface HostBrief { id: number; hostname: string }
+export interface HostSummary { total: number; in_sync: number; pending: number; offline: number; unknown: number }
+export interface HostQuery { q?: string; state?: string; limit?: number; offset?: number }
+export type TokenStatus = 'active' | 'expired' | 'used' | 'revoked'
+export interface EnrolToken {
+  id: number; note: string; created_at: string; created_by: string; expires: string
+  uses_left: number; uses_total: number; status: TokenStatus; seconds_left: number
+}
 export interface Template { id: number; name: string; fstype: string; source: string; mountpoint: string; options: string; version: number }
 export interface Group { id: number; name: string; priority: number; host_regex: string; templates: string[]; members: string[] }
 export interface AuditEvent { id: number; ts: string; actor: string; host: string; action: string; detail: string }
@@ -24,7 +33,7 @@ export class ApiError extends Error { constructor(public status: number, msg: st
 let onUnauthorized: () => void = () => {}
 export const setUnauthorizedHandler = (f: () => void) => { onUnauthorized = f }
 
-async function call<T>(method: string, path: string, body?: unknown): Promise<T> {
+async function callFull<T>(method: string, path: string, body?: unknown): Promise<{ data: T; total: number }> {
   const s = getSession()
   const r = await fetch(path, {
     method,
@@ -37,12 +46,23 @@ async function call<T>(method: string, path: string, body?: unknown): Promise<T>
     if (r.status === 401 && path !== '/api/login') onUnauthorized()
     throw new ApiError(r.status, data?.error || `HTTP ${r.status}`)
   }
-  return data as T
+  return { data: data as T, total: parseInt(r.headers.get('X-Total-Count') || '-1', 10) }
 }
+const call = <T>(method: string, path: string, body?: unknown) => callFull<T>(method, path, body).then(r => r.data)
 
 export const api = {
   login: (username: string, password: string) => call<{ token: string; role: string }>('POST', '/api/login', { username, password }),
-  hosts: () => call<Host[]>('GET', '/api/hosts'),
+  // server-side filtering and pagination; total is the number of hosts matching the filter
+  hosts: (p: HostQuery = {}) => {
+    const qs = new URLSearchParams()
+    if (p.q) qs.set('q', p.q)
+    if (p.state && p.state !== 'all') qs.set('state', p.state)
+    if (p.limit) qs.set('limit', String(p.limit))
+    if (p.offset) qs.set('offset', String(p.offset))
+    return callFull<Host[]>('GET', `/api/hosts?${qs}`).then(r => ({ items: r.data, total: r.total }))
+  },
+  hostNames: () => call<HostBrief[]>('GET', '/api/hosts?brief=1'),
+  hostSummary: () => call<HostSummary>('GET', '/api/hosts/summary'),
   host: (id: number) => call<HostDetail>('GET', `/api/hosts/${id}/mounts`),
   deleteHost: (id: number) => call('DELETE', `/api/hosts/${id}`),
   templates: () => call<Template[]>('GET', '/api/templates'),
@@ -52,6 +72,8 @@ export const api = {
   saveGroup: (g: { name: string; priority: number; host_regex: string }) => call<{ id: number }>('POST', '/api/groups', g),
   deleteGroup: (id: number) => call('DELETE', `/api/groups/${id}`),
   link: (add: boolean, gid: number, kind: 'templates' | 'members', id: number) => call(add ? 'POST' : 'DELETE', `/api/groups/${gid}/${kind}/${id}`),
-  createToken: (note: string, hours: number, uses: number) => call<{ token: string }>('POST', '/api/tokens', { note, hours, uses }),
+  createToken: (note: string, hours: number, uses: number) => call<{ token: string; id: number }>('POST', '/api/tokens', { note, hours, uses }),
+  tokens: (all = false) => call<EnrolToken[]>('GET', `/api/tokens${all ? '?all=1' : ''}`),
+  revokeToken: (id: number) => call('DELETE', `/api/tokens/${id}`),
   audit: (host = '', limit = 200) => call<AuditEvent[]>('GET', `/api/audit?host=${encodeURIComponent(host)}&limit=${limit}`),
 }
