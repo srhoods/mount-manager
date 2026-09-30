@@ -5,6 +5,16 @@ Versioning: one `VERSION` for the agent, server and CLI RPMs. Bump the **minor**
 unchanged version, and requires a `## <version>` entry here. The RPM *Release* only changes for packaging-only
 respins (it is 1 for every new version).
 
+## 0.2.2
+### Fixed
+- Build: the web UI build failed with `crypto.getRandomValues is not a function` on Node.js 16, which is the default
+  `nodejs` package on Rocky 9. Node.js 18 or newer is required. `web/package.json` now declares it (with
+  `engine-strict`, so `npm ci` reports an unsupported Node clearly), and `packaging/build-rpms.sh` checks Node and Go
+  up front and prints the fix.
+- Build: `server/go.mod` demanded exactly Go 1.26.7 (`go 1.26.7`), so building with any earlier 1.26 release failed or
+  tried to download a toolchain. The minimum is now Go 1.26.0. `go mod tidy` also corrected the `go-ldap` dependency
+  from indirect to direct.
+
 ## 0.2.1
 ### Fixed
 - Agent: mounts removed from the configuration are now unmounted before any new mount is made, deepest path first.

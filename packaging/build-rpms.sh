@@ -2,11 +2,26 @@
 # Build mountmgr-agent, mountmgr-server and mountmgr-cli RPMs at the version in ./VERSION.
 #   RPM_HOST=root@host packaging/build-rpms.sh   (rpmbuild runs there, over ssh with nogit/id_ed25519)
 #   packaging/build-rpms.sh                       (rpmbuild runs locally; needs an el9 toolchain)
+# Requires Node.js >= 18 and Go >= 1.26.0 on the build machine (checked up front).
 # Steps: version check -> Go tests -> UI build -> Go build -> rpmbuild (agent runs its mount-logic tests in %check).
 # Results land in build/rpm/. Set SKIP_TESTS=1 only for emergencies.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 packaging/version-check.sh check
+
+# --- toolchain preflight: fail early with a clear message instead of an obscure build error ---
+NODE_MAJOR=$(node -p 'process.versions.node.split(".")[0]' 2>/dev/null || echo 0)
+if [ "$NODE_MAJOR" -lt 18 ]; then
+  echo "build: Node.js 18 or newer is required for the web UI build (found: $(node -v 2>/dev/null || echo 'none'))." >&2
+  echo "       Rocky 9's default 'nodejs' package is v16 and fails with 'crypto.getRandomValues is not a function'." >&2
+  echo "       Fix: dnf -y module reset nodejs && dnf -y module enable nodejs:20 && dnf -y distro-sync nodejs npm" >&2
+  exit 1
+fi
+GO_VER=$(go env GOVERSION 2>/dev/null | sed 's/^go//' || true)
+if [ -z "$GO_VER" ] || [ "$(printf '%s\n' 1.26.0 "$GO_VER" | sort -V | head -1)" != "1.26.0" ]; then
+  echo "build: Go 1.26.0 or newer is required (found: ${GO_VER:-none})." >&2
+  exit 1
+fi
 V=$(tr -d ' \n' < VERSION)
 [ -n "${SKIP_TESTS:-}" ] || { echo "== go tests"; (cd server && go vet ./... && go test -count=1 ./...); }
 echo "== web ui"; (cd web && npm ci --silent && npm run build --silent)

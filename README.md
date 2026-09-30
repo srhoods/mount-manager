@@ -84,6 +84,9 @@ Check the result with `mmctl host ls`, `mmctl host show <id>` and `mmctl audit`.
 
 ## Building and testing
 
+Build machine: Go 1.26.0+, Node.js 18+ (not Rocky 9's default v16; see [docs/INSTALL.md](docs/INSTALL.md#appendix-a-building-the-packages)),
+and an EL9 host with `rpm-build` for the RPMs.
+
 ```bash
 RPM_HOST=root@el9-builder packaging/build-rpms.sh     # builds agent, server and CLI RPMs into build/rpm/
 make -C agent check                                   # agent mount-logic tests (no root or NFS needed)

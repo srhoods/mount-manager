@@ -372,8 +372,21 @@ Run the agent once in the foreground for detailed output: `systemctl stop mountm
 
 ## Appendix A: Building the packages
 
-Requires the source tree, Go, Node.js and npm on the build machine, and an EL9 host with `rpm-build`, `gcc`,
-`make`, `libcurl-devel` and `openssl-devel` for `rpmbuild`.
+Build machine requirements:
+
+- **Go 1.26.0 or newer** (the module's minimum).
+- **Node.js 18 or newer, with npm**, for the web UI. On Rocky 9 the default `nodejs` package is **v16, which is too
+  old** and fails with `TypeError: crypto.getRandomValues is not a function`. Install a supported stream instead:
+
+  ```bash
+  dnf -y module reset nodejs && dnf -y module enable nodejs:20 && dnf -y distro-sync nodejs npm
+  node -v          # v20.x
+  ```
+
+- An EL9 host with `rpm-build`, `gcc`, `make`, `libcurl-devel` and `openssl-devel` for `rpmbuild` (can be the same
+  machine).
+
+The build script checks the Node and Go versions first and stops with the fix if either is too old.
 
 ```bash
 RPM_HOST=root@el9-builder packaging/build-rpms.sh     # rpmbuild runs over ssh on that host
