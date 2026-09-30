@@ -125,7 +125,7 @@ MM_DSN=postgres://mountmgr:<PASSWORD>@<pg-host>:5432/mountmgr?sslmode=verify-ful
 MM_NAMES=mm01.example.com,10.20.30.40
 MM_AGENT_LISTEN=:8443
 MM_ADMIN_LISTEN=:8444
-#MM_LDAP_CONFIG=/etc/mountmgr-server/ldap.json     # see 2.5
+#MM_LDAP_CONFIG=/etc/mountmgr-server/ldap.json     # see 2.6
 ```
 
 Use a DNS name that you can keep for the life of the deployment (for example a CNAME or load-balancer name):
@@ -174,10 +174,60 @@ fingerprint elsewhere.
   browser or OS, otherwise the browser will warn. Sessions last 12 hours; "Keep me signed in" stores the session
   token in the browser's local storage, so untick it on shared machines.
 
-> **Limitation:** the web/admin listener currently always uses the built-in CA's certificate; there is no setting
-> yet to supply your corporate CA certificate for port 8444.
+> Prefer your corporate CA for the web UI? See [2.5](#25-optional-certificates-from-your-own-ca): browsers then need
+> no extra trust configuration.
 
-### 2.5 Optional: Active Directory / LDAPS sign-in
+### 2.5 Optional: certificates from your own CA
+
+By default both listeners present a certificate issued by the built-in CA. Either listener can instead present a
+certificate from your own (corporate or public) CA:
+
+| Listener | Setting | Used by |
+|----------|---------|---------|
+| 8444 web UI and API | `MM_ADMIN_TLS_CERT` / `MM_ADMIN_TLS_KEY` | browsers, `mmctl` |
+| 8443 agent API | `MM_AGENT_TLS_CERT` / `MM_AGENT_TLS_KEY` | agents |
+| both | `MM_TLS_CERT` / `MM_TLS_KEY` | whichever listener has no specific setting |
+
+1. **Get the certificate.** It must cover every name clients use to reach the server (for example `mm01.example.com`).
+   Provide a PEM file with the server certificate first, followed by any intermediate certificates, and the private
+   key as an **unencrypted** PEM file.
+2. **Install the files** where the service account can read them:
+
+   ```bash
+   install -d -m 0750 -o root -g mmserver /etc/mountmgr-server/tls
+   install -m 0644 -o root -g mmserver mm01-chain.pem /etc/mountmgr-server/tls/server.crt
+   install -m 0640 -o root -g mmserver mm01.key       /etc/mountmgr-server/tls/server.key
+   ```
+
+3. **Point the server at them** in `server.env` (for example `MM_TLS_CERT=/etc/mountmgr-server/tls/server.crt` and
+   `MM_TLS_KEY=/etc/mountmgr-server/tls/server.key`) and run `systemctl restart mountmgr-server`. The log confirms the
+   certificate and warns if it expires within 30 days or does not cover a name in `MM_NAMES`:
+
+   ```
+   admin listener: external certificate subject="mm01.example.com" issuer="Corp Issuing CA" names=[mm01.example.com] expires=2027-08-01
+   ```
+
+- **Renewals need no restart.** Replace the two files; the server notices within about ten seconds and logs
+  `loaded new certificate`. A certificate that is expired, unreadable or does not match its key is rejected and the
+  previous one keeps being served (the log says so).
+- **Web UI and CLI:** browsers that already trust your CA need nothing further, and `mmctl login https://mm01.example.com:8444 admin`
+  works without `--ca` (it uses the system trust store; add `--ca bundle.pem` otherwise).
+- **Agents and the agent listener (8443).** Agents verify the server with the built-in CA unless told otherwise.
+  - If you leave 8443 on the built-in certificate, nothing changes for agents. This is the simplest option.
+  - If 8443 uses an external certificate, agents must trust that CA: set `server_ca_file=` in `/etc/mountmgr/agent.conf` to the
+    CA bundle that signed it, or `server_ca_file=system` to use the operating system's trust store
+    (`/etc/pki/tls/certs/ca-bundle.crt`), and restart the agent. New hosts set it before enrolling (no
+    `ca_sha256` is needed, because trust comes from your CA).
+  - **Migration is safe in either order.** An agent with `server_ca_file` trusts that CA *and* the built-in CA it already
+    holds, so you can roll the setting out to the fleet at your own pace and switch the server when every agent has it.
+    An agent that has not been updated cannot connect to a server presenting the new certificate; it keeps its mounts
+    from cached state and recovers as soon as it is configured. The combined trust file is kept in
+    `/var/lib/mountmgr/trust.pem` and rebuilt when the bundle changes.
+- **Client certificates** (what agents authenticate with) are always issued by the built-in CA, whatever the server
+  certificates are. The built-in CA therefore stays in the database and its backups remain sensitive.
+- LDAPS trust is separate (`ca_file` in `ldap.json`).
+
+### 2.6 Optional: Active Directory / LDAPS sign-in
 
 Local accounts always work. To add directory sign-in:
 
@@ -208,7 +258,7 @@ Roles: `readonly` can view everything; `operator` can also change templates, gro
 `admin` can also create enrolment tokens. Five failed sign-ins for one user from one address block further
 attempts for five minutes. Every sign-in, denial and failure is written to the audit log.
 
-### 2.6 Define what to mount
+### 2.7 Define what to mount
 
 Mounts are defined by **templates**, applied to hosts through **groups**.
 
@@ -233,14 +283,14 @@ mmctl group add-template <group-id> <template-id>
 - The web UI (Templates and Groups pages) does the same and previews which hosts a regex matches.
 - Where mounts are allowed is enforced **on each host** (see 3.4), not just by the server.
 
-### 2.7 Upgrades
+### 2.8 Upgrades
 
 ```bash
 dnf -y install ./mountmgr-server-<new>.el9.x86_64.rpm ./mountmgr-cli-<new>.el9.x86_64.rpm   # upgrades in place; restarts the service
 ```
 
 Configuration files are preserved. When the packaged default of a config file changes you may find a
-`server.env.rpmnew` beside it; compare and merge by hand. The schema is upgraded automatically at start-up.
+`server.env.rpmnew` beside it; compare and merge by hand. The schema is upgraded automatically at start-up (version 0.3.0 adds columns to the enrolment token table; existing tokens keep working).
 Read `CHANGELOG.md` first for anything marked *Upgrade notes*.
 
 ---
@@ -271,6 +321,18 @@ mmctl token create --note "render farm batch 3" --hours 48 --uses 50
 The token is printed **once** and stored only as a hash. Limit both its lifetime and its number of uses to what
 the batch needs; a leaked token lets its holder enrol a machine with any hostname until it runs out.
 
+Track and withdraw tokens from the **Enrolment** page, which lists the active tokens with their uses remaining, the
+time left, who created them and when they expire, or from the CLI:
+
+```bash
+mmctl token ls               # active tokens: id, status, note, uses (left/total), time left
+mmctl token ls --all         # also expired, used-up and revoked tokens
+mmctl token revoke <id>      # withdraw a token that can still be used (e.g. it leaked, or the batch is cancelled)
+```
+
+Revoking stops further enrolments with that token immediately; hosts that already enrolled keep working. Every
+creation, revocation and refused enrolment is written to the audit log, and each enrolment names the token used.
+
 ### 3.3 Install and enrol the host
 
 ```bash
@@ -286,6 +348,9 @@ echo '<token>' > /var/lib/mountmgr/enroll.token
 
 systemctl enable --now mountmgr-agent
 ```
+
+> If the server's agent listener uses a certificate from your own CA (see [2.5](#25-optional-certificates-from-your-own-ca)),
+> set `server_ca_file=` (your CA bundle, or `system`) instead of `ca_sha256`.
 
 **Pinning matters.** Without `ca_sha256` the agent trusts whatever CA the server presents on first contact and
 only logs a warning (`trust-on-first-use`). With it, the agent refuses to continue if the fingerprint differs.
@@ -311,6 +376,9 @@ mmctl host ls                    # STATUS: in-sync; PROBLEMS: empty
 mmctl host show <id>             # desired mounts vs actual state
 mmctl audit --host <hostname>    # enrol / mount / umount history
 ```
+
+The Hosts page is paginated (25, 50, 100 or 250 rows per page) and filters by name and state on the server, so it stays
+quick with thousands of hosts. States are `IN SYNC`, `PENDING`, `OFFLINE` (no contact for 15 minutes) and `UNKNOWN`.
 
 Expect the first mounts within seconds of the service starting. If the host matches no group it enrols but has
 nothing to mount ("No mounts are assigned to this host" in the UI).
@@ -359,6 +427,7 @@ nothing to mount ("No mounts are assigned to this host" in the UI).
 | `fetch-ca … fingerprint mismatch` | `ca_sha256` does not match the server's CA. Wrong server, or the CA was regenerated: re-check with `curl -sk https://<server>:8443/v1/ca \| sha256sum`. Never "fix" this by deleting the pin without finding out why. |
 | `fetch-ca result=failed http=-1`, `poll result=failed http=-1` | Cannot reach the server: DNS, firewall (8443), or the server is down. Mounts continue from the cached state. |
 | `poll … http=403` after it worked | The host was removed on the server, or its certificate was superseded. Re-enrol with a new token (stop the agent, delete `/var/lib/mountmgr/client.*`, add the token). |
+| `poll result=failed http=-1` right after the server was given an external certificate | The agent does not trust the new CA. Set `server_ca_file` (see 2.5) and restart the agent. |
 | TLS error mentioning the server name | The name in `agent.conf` is not in the server's `MM_NAMES`. Add it and restart the server. |
 | `mount … result=refused reason="not an allowed mountpoint"` / `"fstype not allowed"` | Outside the agent allow-lists (3.5). |
 | `mount … result=failed error="…"` | The mount command's own error, e.g. name resolution, `Connection timed out`, `unknown filesystem type 'wekafs'` (driver not installed). |

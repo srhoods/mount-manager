@@ -15,10 +15,10 @@ see the state of every host.
 - **Least privilege.** The agent runs as a service account and mounts through tightly scoped sudo rules. Agent-side
   allow-lists (paths and filesystem types) limit what the server can ask it to do.
 - **Resilient.** Agents keep working from their last known state if the server is unreachable, including across reboots.
-- **Web UI, CLI and API.** A web UI and the `mmctl` command line share one REST API. Sign in with local accounts or
+- **Web UI, CLI and API.** A web UI and the `mmctl` command line share one REST API; enrolment tokens can be listed and revoked. Sign in with local accounts or
   Active Directory / LDAPS, with `admin`, `operator` and `readonly` roles.
 - **Encrypted end to end.** Agents talk to the server over mutual TLS, using certificates issued by the server's
-  built-in CA.
+  built-in CA. The web and agent listeners can present certificates from your own CA instead, reloaded without a restart.
 
 Supported today: **NFS** (`nfs`, `nfs4`) and **Weka** (`wekafs`). Client drivers, such as the Weka client, are
 installed separately. Local filesystems are deliberately out of scope. Target platform: Rocky Linux 9+.
@@ -114,7 +114,6 @@ Known limitations and planned work:
 - Changes apply to all affected hosts at once. Canary and batch rollouts are not implemented.
 - Mounts are made by the agent after the network is up and are not in `/etc/fstab`, so `mmd` must be running after a
   reboot, and services that need a mount at boot should tolerate it appearing a moment after `remote-fs.target`.
-- The web listener always uses the built-in CA's certificate. There is no option yet to supply your own.
 - `wekafs` support is verified with fake mount commands and the failure path only, not against a real Weka cluster.
 
 ## Security

@@ -5,6 +5,54 @@ Versioning: one `VERSION` for the agent, server and CLI RPMs. Bump the **minor**
 unchanged version, and requires a `## <version>` entry here. The RPM *Release* only changes for packaging-only
 respins (it is 1 for every new version).
 
+## 0.3.3
+### Fixed
+- Web UI: the host dialog now reloads its data if a different host is opened while it is showing (it could keep
+  displaying the previous host's mounts and events until the next refresh).
+- Web UI: hostnames in the dashboard's "Needs attention" list no longer wrap.
+
+## 0.3.2
+### Fixed
+- Web UI: opening a host that has no mounts assigned (for example a newly enrolled host that matches no group) blanked
+  the whole page. The API returned `null` instead of an empty list and the dialog iterated over it. The API now returns
+  empty lists, the UI tolerates `null`, and any future render error shows a message with a reload button instead of a
+  blank page. (This affected earlier releases too.)
+- Web UI: very long pages (250 rows per page) are now scrolled inside the table with a sticky header, so the pager is
+  always on screen and the page stays a normal height.
+
+## 0.3.1
+### Fixed
+- Agent: a new host configured with `server_ca_file` could not enrol, because the combined trust file was only built in
+  the polling cycle, after enrolment. It is now built on first use.
+- Database: enrolment tokens that predate 0.3.0 and were already used up now show a total of at least 1 use instead of 0.
+
+## 0.3.0
+### Added
+- **Certificates from your own CA.** The web/API listener (8444) and the agent listener (8443) can each serve a
+  certificate issued by an external CA (`MM_TLS_CERT`/`MM_TLS_KEY`, or `MM_ADMIN_TLS_*` / `MM_AGENT_TLS_*`). The
+  files are re-read when they change, so renewals need no restart, and a bad replacement is rejected while the old
+  certificate keeps being served. Startup warns about certificates that are close to expiry or do not cover
+  `MM_NAMES`. Agents gain `server_ca_file` (a CA bundle, or `system`), trusted in addition to the built-in CA. Client
+  certificates are still issued by the built-in CA.
+- **Hosts page pagination** with 25 / 50 / 100 / 250 rows per page (remembered per browser) and first / previous /
+  next / last navigation. Search and state filtering are now done by the server, so the page stays fast with
+  thousands of hosts. `GET /api/hosts` accepts `q`, `state`, `limit`, `offset` and returns `X-Total-Count`;
+  `GET /api/hosts/summary` provides the dashboard counts. `mmctl host ls` gains `--q`, `--state`, `--limit`, `--offset`.
+- **Enrolment tokens can be listed and revoked.** The Enrolment page shows active tokens with uses remaining, time
+  left, who created them and when they expire, and lets an administrator revoke a token that can still be used (an
+  optional view includes expired, used-up and revoked tokens). `mmctl token ls [--all]` and `mmctl token revoke <id>`.
+  Enrolments are audited with the token that was used, and refused attempts are recorded.
+### Changed
+- Host and token states are shown in upper case (`IN SYNC`, `PENDING`, `OFFLINE`, `UNKNOWN`, `ACTIVE`, ...).
+- The host detail dialog uses the width of the window, so mount paths, sources, options and events no longer wrap.
+### Upgrade notes
+- The database schema is extended automatically at start-up (token id, creation time, creator, total uses and
+  revocation). Existing tokens keep working; their "total uses" is initialised to the uses they had left.
+- To move the **agent listener** to an external-CA certificate, roll out `server_ca_file` to the agents, then switch the
+  server. An agent with `server_ca_file` trusts that CA and the built-in CA it already holds, so the order is not
+  critical; agents without it cannot connect to a server that presents any other certificate (they keep working from
+  cached state until configured).
+
 ## 0.2.2
 ### Fixed
 - Build: the web UI build failed with `crypto.getRandomValues is not a function` on Node.js 16, which is the default
