@@ -31,3 +31,13 @@ CREATE TABLE IF NOT EXISTS sessions (
 CREATE TABLE IF NOT EXISTS enroll_tokens (
   token_hash text PRIMARY KEY, note text NOT NULL DEFAULT '', expires timestamptz NOT NULL, uses_left int NOT NULL DEFAULT 1);
 CREATE TABLE IF NOT EXISTS kv (k text PRIMARY KEY, v bytea NOT NULL);
+
+-- Enrolment token lifecycle (listing, remaining uses, revocation). Additive and idempotent.
+ALTER TABLE enroll_tokens ADD COLUMN IF NOT EXISTS id bigserial;
+ALTER TABLE enroll_tokens ADD COLUMN IF NOT EXISTS created_at timestamptz NOT NULL DEFAULT now();
+ALTER TABLE enroll_tokens ADD COLUMN IF NOT EXISTS created_by text NOT NULL DEFAULT '';
+ALTER TABLE enroll_tokens ADD COLUMN IF NOT EXISTS uses_total int NOT NULL DEFAULT 0;
+ALTER TABLE enroll_tokens ADD COLUMN IF NOT EXISTS revoked_at timestamptz;
+UPDATE enroll_tokens SET uses_total = GREATEST(uses_left, 1) WHERE uses_total = 0;
+CREATE UNIQUE INDEX IF NOT EXISTS enroll_tokens_id ON enroll_tokens (id);
+CREATE INDEX IF NOT EXISTS hosts_hostname_lower ON hosts (lower(hostname));

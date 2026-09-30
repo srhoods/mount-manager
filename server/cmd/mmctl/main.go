@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -35,8 +36,8 @@ const usage = `usage: mmctl <command>
   group ls | set <name> [--priority N] [--regex RE] | rm <id>
   group add-template <group-id> <template-id> | rm-template <group-id> <template-id>
   group add-host <group-id> <host-id> | rm-host <group-id> <host-id>
-  host ls | show <id> | rm <id>
-  token create [--note text] [--hours N] [--uses N]
+  host ls [--q text] [--state in-sync|pending|offline|unknown|attention] [--limit N] [--offset N] | show <id> | rm <id>
+  token create [--note text] [--hours N] [--uses N] | ls [--all] | revoke <id>
   audit [--host name] [--limit N]`
 
 func die(f string, a ...any) { fmt.Fprintf(os.Stderr, "mmctl: "+f+"\n", a...); os.Exit(1) }
@@ -95,6 +96,18 @@ func call(method, path string, body any) []byte {
 		die("%s (HTTP %d)", e.Error, resp.StatusCode)
 	}
 	return out
+}
+
+func humanDuration(secs int64) string {
+	switch {
+	case secs <= 0:
+		return "-"
+	case secs < 3600:
+		return fmt.Sprintf("%dm", secs/60)
+	case secs < 86400:
+		return fmt.Sprintf("%dh %dm", secs/3600, secs%3600/60)
+	}
+	return fmt.Sprintf("%dd %dh", secs/86400, secs%86400/3600)
 }
 
 func table(data []byte, cols ...string) {
@@ -218,7 +231,12 @@ func main() {
 	case "host":
 		switch sub() {
 		case "ls":
-			table(call("GET", "/api/hosts", nil), "id", "hostname", "status", "last_seen", "agent_version", "problems")
+			q, a := flagVal(args, "--q")
+			st, a := flagVal(a, "--state")
+			lim, a := flagVal(a, "--limit")
+			off, _ := flagVal(a, "--offset")
+			path := "/api/hosts?q=" + url.QueryEscape(q) + "&state=" + url.QueryEscape(st) + "&limit=" + lim + "&offset=" + off
+			table(call("GET", path, nil), "id", "hostname", "state", "last_seen", "agent_version", "problems")
 		case "show":
 			need(1)
 			var b bytes.Buffer
@@ -231,18 +249,38 @@ func main() {
 			die("%s", usage)
 		}
 	case "token":
-		if sub() != "create" {
+		switch sub() {
+		case "create":
+			note, a := flagVal(args, "--note")
+			hrs, a := flagVal(a, "--hours")
+			uses, _ := flagVal(a, "--uses")
+			h, u := 24, 1
+			fmt.Sscan(hrs, &h)
+			fmt.Sscan(uses, &u)
+			var r struct{ Token string }
+			json.Unmarshal(call("POST", "/api/tokens", map[string]any{"note": note, "hours": h, "uses": u}), &r)
+			fmt.Println(r.Token)
+		case "ls":
+			all, _ := flagBool(args, "--all")
+			path := "/api/tokens"
+			if all {
+				path += "?all=1"
+			}
+			var rows []map[string]any
+			json.Unmarshal(call("GET", path, nil), &rows)
+			for _, r := range rows {
+				r["uses"] = fmt.Sprintf("%.0f/%.0f", r["uses_left"], r["uses_total"])
+				r["left"] = humanDuration(int64(r["seconds_left"].(float64)))
+			}
+			b, _ := json.Marshal(rows)
+			table(b, "id", "status", "note", "uses", "left", "created_by", "expires")
+		case "revoke":
+			need(1)
+			call("DELETE", "/api/tokens/"+args[0], nil)
+			fmt.Println("revoked")
+		default:
 			die("%s", usage)
 		}
-		note, a := flagVal(args, "--note")
-		hrs, a := flagVal(a, "--hours")
-		uses, _ := flagVal(a, "--uses")
-		h, u := 24, 1
-		fmt.Sscan(hrs, &h)
-		fmt.Sscan(uses, &u)
-		var r struct{ Token string }
-		json.Unmarshal(call("POST", "/api/tokens", map[string]any{"note": note, "hours": h, "uses": u}), &r)
-		fmt.Println(r.Token)
 	case "audit":
 		host, a := flagVal(args, "--host")
 		lim, _ := flagVal(a, "--limit")

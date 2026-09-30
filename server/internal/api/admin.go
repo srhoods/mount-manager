@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"github.com/rhoods/mountmanager/internal/auth"
 	"github.com/rhoods/mountmanager/internal/ui"
 	"log"
@@ -37,13 +38,13 @@ func (s *Server) AdminMux() http.Handler {
 	mux.HandleFunc("DELETE /api/groups/{id}/templates/{tid}", rw(s.link(`DELETE FROM group_templates WHERE group_id=$1 AND template_id=$2`)))
 	mux.HandleFunc("POST /api/groups/{id}/members/{tid}", rw(s.link(`INSERT INTO group_members VALUES($1,$2) ON CONFLICT DO NOTHING`)))
 	mux.HandleFunc("DELETE /api/groups/{id}/members/{tid}", rw(s.link(`DELETE FROM group_members WHERE group_id=$1 AND host_id=$2`)))
-	mux.HandleFunc("GET /api/hosts", ro(s.list(`SELECT h.id,h.hostname,h.agent_version,h.last_seen,
-	  CASE WHEN h.desired_hash='' THEN 'unknown' WHEN h.desired_hash=h.applied_hash THEN 'in-sync' ELSE 'pending' END AS status,
-	  COALESCE((SELECT string_agg(mountpoint||': '||state||CASE WHEN error<>'' THEN ' ('||error||')' ELSE '' END, '; ') FROM host_mounts m WHERE m.host_id=h.id AND m.state<>'ok'),'') AS problems
-	  FROM hosts h ORDER BY h.hostname`, "id", "hostname", "agent_version", "last_seen", "status", "problems")))
+	mux.HandleFunc("GET /api/hosts", ro(s.listHosts))
+	mux.HandleFunc("GET /api/hosts/summary", ro(s.hostSummary))
 	mux.HandleFunc("DELETE /api/hosts/{id}", rw(s.del("hosts")))
 	mux.HandleFunc("GET /api/hosts/{id}/mounts", ro(s.hostMounts))
 	mux.HandleFunc("POST /api/tokens", adm(s.newToken))
+	mux.HandleFunc("GET /api/tokens", adm(s.listTokens))
+	mux.HandleFunc("DELETE /api/tokens/{id}", adm(s.revokeToken))
 	mux.HandleFunc("GET /api/audit", ro(s.auditList))
 	return mux
 }
@@ -255,6 +256,9 @@ func (s *Server) hostMounts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	desired, _ := s.DesiredMounts(r.Context(), id, host)
+	if desired == nil {
+		desired = []Mount{} // a host in no group has no mounts: return [], not null
+	}
 	rows, _ := s.DB.Query(r.Context(), `SELECT mountpoint,state,error,updated_at FROM host_mounts WHERE host_id=$1`, id)
 	defer rows.Close()
 	state := []map[string]any{}
@@ -280,11 +284,65 @@ func (s *Server) newToken(w http.ResponseWriter, r *http.Request) {
 	if req.Uses <= 0 {
 		req.Uses = 1
 	}
+	if req.Hours > 24*365 || req.Uses > 100000 {
+		fail(w, 400, "hours must be at most 8760 and uses at most 100000")
+		return
+	}
 	tok := randTok()
-	s.DB.Exec(r.Context(), `INSERT INTO enroll_tokens(token_hash,note,expires,uses_left) VALUES($1,$2,now()+make_interval(hours=>$3),$4)`,
-		hashTok(tok), req.Note, req.Hours, req.Uses)
-	s.audit(r.Context(), user(r), "", "token-create", req.Note)
-	jsonOut(w, 200, map[string]string{"token": tok})
+	var id int64
+	err := s.DB.QueryRow(r.Context(), `INSERT INTO enroll_tokens(token_hash,note,expires,uses_left,uses_total,created_by)
+	  VALUES($1,$2,now()+make_interval(hours=>$3),$4,$4,$5) RETURNING id`, hashTok(tok), req.Note, req.Hours, req.Uses, strings.TrimPrefix(user(r), "user:")).Scan(&id)
+	if err != nil {
+		fail(w, 500, err.Error())
+		return
+	}
+	s.audit(r.Context(), user(r), "", "token-create", fmt.Sprintf("#%d %q uses=%d hours=%d", id, req.Note, req.Uses, req.Hours))
+	jsonOut(w, 200, map[string]any{"token": tok, "id": id})
+}
+
+// tokenStatus is the lifecycle state of an enrolment token; computed in SQL so every client agrees.
+const tokenStatus = `CASE WHEN revoked_at IS NOT NULL THEN 'revoked' WHEN expires <= now() THEN 'expired' WHEN uses_left <= 0 THEN 'used' ELSE 'active' END`
+
+// listTokens returns active enrolment tokens (?all=1 also returns expired, used-up and revoked ones, newest first).
+// Token secrets are never stored or returned, only their metadata.
+func (s *Server) listTokens(w http.ResponseWriter, r *http.Request) {
+	all := r.URL.Query().Get("all") != ""
+	rows, err := s.DB.Query(r.Context(), `SELECT id,note,created_at,created_by,expires,uses_left,uses_total,`+tokenStatus+` AS status,
+	    GREATEST(0, extract(epoch FROM (expires - now())))::bigint AS seconds_left, revoked_at
+	  FROM enroll_tokens WHERE ($1 OR (`+tokenStatus+`)='active') ORDER BY created_at DESC, id DESC LIMIT 200`, all)
+	if err != nil {
+		fail(w, 500, err.Error())
+		return
+	}
+	defer rows.Close()
+	out := []map[string]any{}
+	for rows.Next() {
+		var id, secs int64
+		var note, by, status string
+		var created, expires time.Time
+		var left, total int
+		var revoked *time.Time
+		if err := rows.Scan(&id, &note, &created, &by, &expires, &left, &total, &status, &secs, &revoked); err != nil {
+			fail(w, 500, err.Error())
+			return
+		}
+		out = append(out, map[string]any{"id": id, "note": note, "created_at": created, "created_by": by, "expires": expires,
+			"uses_left": left, "uses_total": total, "status": status, "seconds_left": secs, "revoked_at": revoked})
+	}
+	jsonOut(w, 200, out)
+}
+
+// revokeToken invalidates a token that is still usable. Used, expired and already-revoked tokens are left as they are.
+func (s *Server) revokeToken(w http.ResponseWriter, r *http.Request) {
+	id, _ := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	var note string
+	err := s.DB.QueryRow(r.Context(), `UPDATE enroll_tokens SET revoked_at=now() WHERE id=$1 AND (`+tokenStatus+`)='active' RETURNING note`, id).Scan(&note)
+	if err != nil {
+		fail(w, 404, "no such active enrolment token")
+		return
+	}
+	s.audit(r.Context(), user(r), "", "token-revoke", fmt.Sprintf("#%d %q", id, note))
+	jsonOut(w, 200, map[string]string{"status": "ok"})
 }
 
 func (s *Server) auditList(w http.ResponseWriter, r *http.Request) {
@@ -329,4 +387,105 @@ func ValidateTemplate(fstype, source string) string {
 		return "unsupported fstype (" + strings.Join(SupportedFSTypes, ", ") + ")"
 	}
 	return ""
+}
+
+// hostStale is how long a host may stay silent before it is shown as OFFLINE (three missed 5-minute polls).
+const hostStale = "15 minutes"
+
+// hostState is the single definition of a host's display state, used for lists, filters and summary counts.
+const hostState = `CASE WHEN last_seen IS NULL OR last_seen < now() - interval '` + hostStale + `' THEN 'offline'
+	WHEN desired_hash = '' THEN 'unknown' WHEN desired_hash = applied_hash THEN 'in-sync' ELSE 'pending' END`
+
+// listHosts serves the host list. Query parameters: q (hostname substring), state (in-sync|pending|offline|unknown|
+// attention), limit and offset (pagination; without limit everything is returned), brief=1 (id and hostname only).
+// The total number of matches is returned in the X-Total-Count header.
+func (s *Server) listHosts(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	state := q.Get("state")
+	switch state {
+	case "", "in-sync", "pending", "offline", "unknown", "attention":
+	default:
+		fail(w, 400, "state must be one of in-sync, pending, offline, unknown, attention")
+		return
+	}
+	var limit *int64
+	if v := q.Get("limit"); v != "" {
+		n, err := strconv.ParseInt(v, 10, 64)
+		if err != nil || n < 1 || n > 1000 {
+			fail(w, 400, "limit must be between 1 and 1000")
+			return
+		}
+		limit = &n
+	}
+	offset, _ := strconv.ParseInt(q.Get("offset"), 10, 64)
+	if offset < 0 {
+		offset = 0
+	}
+	const filtered = `WITH f AS (SELECT h.*, ` + hostState + ` AS state FROM hosts h WHERE ($1 = '' OR strpos(lower(h.hostname), lower($1)) > 0))
+	  SELECT * FROM f WHERE ($2 = '' OR ($2 = 'attention' AND state <> 'in-sync') OR state = $2)`
+	var total int64
+	if err := s.DB.QueryRow(r.Context(), `SELECT count(*) FROM (`+filtered+`) c`, q.Get("q"), state).Scan(&total); err != nil {
+		fail(w, 500, err.Error())
+		return
+	}
+	w.Header().Set("X-Total-Count", strconv.FormatInt(total, 10))
+	if q.Get("brief") != "" {
+		rows, err := s.DB.Query(r.Context(), `SELECT id, hostname FROM (`+filtered+`) p ORDER BY hostname LIMIT $3 OFFSET $4`, q.Get("q"), state, limit, offset)
+		if err != nil {
+			fail(w, 500, err.Error())
+			return
+		}
+		defer rows.Close()
+		out := []map[string]any{}
+		for rows.Next() {
+			var id int64
+			var h string
+			rows.Scan(&id, &h)
+			out = append(out, map[string]any{"id": id, "hostname": h})
+		}
+		jsonOut(w, 200, out)
+		return
+	}
+	// problems are only computed for the rows on this page
+	rows, err := s.DB.Query(r.Context(), `SELECT p.id, p.hostname, p.agent_version, p.last_seen, p.state,
+	    CASE WHEN p.desired_hash = '' THEN 'unknown' WHEN p.desired_hash = p.applied_hash THEN 'in-sync' ELSE 'pending' END AS status,
+	    COALESCE((SELECT string_agg(mountpoint||': '||state||CASE WHEN error<>'' THEN ' ('||error||')' ELSE '' END, '; ')
+	              FROM host_mounts m WHERE m.host_id = p.id AND m.state <> 'ok'), '') AS problems
+	  FROM (SELECT * FROM (`+filtered+`) x ORDER BY hostname LIMIT $3 OFFSET $4) p ORDER BY p.hostname`, q.Get("q"), state, limit, offset)
+	if err != nil {
+		fail(w, 500, err.Error())
+		return
+	}
+	defer rows.Close()
+	out := []map[string]any{}
+	for rows.Next() {
+		var id int64
+		var host, ver, st, status, problems string
+		var seen *time.Time
+		if err := rows.Scan(&id, &host, &ver, &seen, &st, &status, &problems); err != nil {
+			fail(w, 500, err.Error())
+			return
+		}
+		out = append(out, map[string]any{"id": id, "hostname": host, "agent_version": ver, "last_seen": seen, "state": st, "status": status, "problems": problems})
+	}
+	jsonOut(w, 200, out)
+}
+
+// hostSummary returns counts per display state for the dashboard, without transferring the hosts themselves.
+func (s *Server) hostSummary(w http.ResponseWriter, r *http.Request) {
+	rows, err := s.DB.Query(r.Context(), `SELECT `+hostState+` AS state, count(*) FROM hosts GROUP BY 1`)
+	if err != nil {
+		fail(w, 500, err.Error())
+		return
+	}
+	defer rows.Close()
+	out := map[string]int64{"total": 0, "in_sync": 0, "pending": 0, "offline": 0, "unknown": 0}
+	for rows.Next() {
+		var st string
+		var n int64
+		rows.Scan(&st, &n)
+		out["total"] += n
+		out[strings.ReplaceAll(st, "-", "_")] = n
+	}
+	jsonOut(w, 200, out)
 }

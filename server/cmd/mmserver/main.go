@@ -19,6 +19,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/rhoods/mountmanager/internal/api"
 	"github.com/rhoods/mountmanager/internal/pki"
+	"github.com/rhoods/mountmanager/internal/tlsutil"
 )
 
 // version is set at build time (-ldflags "-X main.version=...").
@@ -30,6 +31,12 @@ func main() {
 	agentAddr := flag.String("agent-listen", ":8443", "agent mTLS listen address")
 	adminAddr := flag.String("admin-listen", ":8444", "admin API/UI listen address")
 	initAdmin := flag.String("init-admin", "", "create/reset local admin user 'admin' with this password and exit")
+	tlsCert := flag.String("tls-cert", os.Getenv("MM_TLS_CERT"), "PEM certificate chain from your own CA, used for BOTH listeners unless overridden (or MM_TLS_CERT)")
+	tlsKey := flag.String("tls-key", os.Getenv("MM_TLS_KEY"), "PEM private key for -tls-cert (or MM_TLS_KEY)")
+	adminCert := flag.String("admin-tls-cert", os.Getenv("MM_ADMIN_TLS_CERT"), "certificate chain for the admin/web listener only (or MM_ADMIN_TLS_CERT)")
+	adminKey := flag.String("admin-tls-key", os.Getenv("MM_ADMIN_TLS_KEY"), "private key for -admin-tls-cert (or MM_ADMIN_TLS_KEY)")
+	agentCert := flag.String("agent-tls-cert", os.Getenv("MM_AGENT_TLS_CERT"), "certificate chain for the agent listener only (or MM_AGENT_TLS_CERT)")
+	agentKey := flag.String("agent-tls-key", os.Getenv("MM_AGENT_TLS_KEY"), "private key for -agent-tls-cert (or MM_AGENT_TLS_KEY)")
 	ldapCfg := flag.String("ldap-config", os.Getenv("MM_LDAP_CONFIG"), "LDAPS auth config JSON (or MM_LDAP_CONFIG); optional")
 	showVersion := flag.Bool("version", false, "print version and exit")
 	ldapCheck := flag.String("ldap-check", "", "test directory login for this user (password from MM_LDAP_TEST_PASSWORD or stdin) and exit; needs no database")
@@ -63,12 +70,44 @@ func main() {
 
 	ca := loadOrCreateCA(ctx, pool)
 	nameList := strings.Split(*names, ",")
-	kp, err := loadOrCreateServerCert(ctx, pool, ca, nameList)
-	if err != nil {
-		log.Fatal(err)
-	}
 	pool2 := x509.NewCertPool()
-	pool2.AddCert(ca.Cert)
+	pool2.AddCert(ca.Cert) // client certificates are always issued by the built-in CA
+
+	// Each listener serves either a certificate from your own CA (reloaded when the files change) or the
+	// built-in CA's certificate. Nothing is generated unless a listener needs it.
+	var builtin *tls.Certificate
+	serverCert := func(name string, specific, shared tlsutil.Pair) func(*tls.ClientHelloInfo) (*tls.Certificate, error) {
+		pr := shared
+		if specific.Set() {
+			pr = specific
+		}
+		if err := pr.Validate(name + " listener"); err != nil {
+			log.Fatal(err)
+		}
+		if pr.Set() {
+			r, err := tlsutil.NewReloader(name, pr.Cert, pr.Key)
+			if err != nil {
+				log.Fatal(err)
+			}
+			log.Printf("%s listener: external certificate %s", name, r.Describe())
+			for _, w := range r.Check(nameList) {
+				log.Printf("WARNING %s", w)
+			}
+			return r.GetCertificate
+		}
+		if builtin == nil {
+			kp, err := loadOrCreateServerCert(ctx, pool, ca, nameList)
+			if err != nil {
+				log.Fatal(err)
+			}
+			builtin = &kp
+		}
+		log.Printf("%s listener: built-in CA certificate", name)
+		return func(*tls.ClientHelloInfo) (*tls.Certificate, error) { return builtin, nil }
+	}
+	shared := tlsutil.Pair{Cert: *tlsCert, Key: *tlsKey}
+	adminGet := serverCert("admin", tlsutil.Pair{Cert: *adminCert, Key: *adminKey}, shared)
+	agentGet := serverCert("agent", tlsutil.Pair{Cert: *agentCert, Key: *agentKey}, shared)
 
 	s := api.New(pool, ca)
 	if *ldapCfg != "" {
@@ -84,9 +123,9 @@ func main() {
 		log.Printf("directory login enabled (%s)", cfg.URL)
 	}
 	agentSrv := &http.Server{Addr: *agentAddr, Handler: s.AgentMux(), TLSConfig: &tls.Config{
-		Certificates: []tls.Certificate{kp}, ClientCAs: pool2, ClientAuth: tls.VerifyClientCertIfGiven, MinVersion: tls.VersionTLS12}}
+		GetCertificate: agentGet, ClientCAs: pool2, ClientAuth: tls.VerifyClientCertIfGiven, MinVersion: tls.VersionTLS12}}
 	adminSrv := &http.Server{Addr: *adminAddr, Handler: s.AdminMux(), TLSConfig: &tls.Config{
-		Certificates: []tls.Certificate{kp}, MinVersion: tls.VersionTLS12}}
+		GetCertificate: adminGet, MinVersion: tls.VersionTLS12}}
 	go func() { log.Fatal(adminSrv.ListenAndServeTLS("", "")) }()
 	log.Printf("mmserver %s: agent %s admin %s", version, *agentAddr, *adminAddr)
 	log.Fatal(agentSrv.ListenAndServeTLS("", ""))

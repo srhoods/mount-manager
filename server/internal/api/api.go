@@ -188,10 +188,14 @@ func (s *Server) enroll(w http.ResponseWriter, r *http.Request) {
 	if r.TLS != nil && len(r.TLS.PeerCertificates) > 0 && r.TLS.PeerCertificates[0].Subject.CommonName == req.Hostname {
 		renew = true
 	}
+	var tokID int64
+	var tokNote string
 	if !renew {
-		tag, err := s.DB.Exec(r.Context(),
-			`UPDATE enroll_tokens SET uses_left=uses_left-1 WHERE token_hash=$1 AND expires>now() AND uses_left>0`, hashTok(req.Token))
-		if err != nil || tag.RowsAffected() == 0 {
+		// atomically spend one use of a token that is still active (not revoked, not expired, uses remaining)
+		err := s.DB.QueryRow(r.Context(), `UPDATE enroll_tokens SET uses_left=uses_left-1
+		  WHERE token_hash=$1 AND expires>now() AND uses_left>0 AND revoked_at IS NULL RETURNING id, note`, hashTok(req.Token)).Scan(&tokID, &tokNote)
+		if err != nil {
+			s.audit(r.Context(), "agent:"+req.Hostname, req.Hostname, "enrol-refused", "invalid, expired, revoked or used-up enrolment token")
 			fail(w, 403, "invalid or expired enrolment token")
 			return
 		}
@@ -211,7 +215,11 @@ func (s *Server) enroll(w http.ResponseWriter, r *http.Request) {
 	if renew {
 		act = "cert-renew"
 	}
-	s.audit(r.Context(), "agent:"+req.Hostname, req.Hostname, act, "serial "+serial)
+	detail := "serial " + serial
+	if !renew {
+		detail += fmt.Sprintf(" via token #%d %q", tokID, tokNote)
+	}
+	s.audit(r.Context(), "agent:"+req.Hostname, req.Hostname, act, detail)
 	w.Header().Set("Content-Type", "text/plain")
 	w.Write(cert)
 	w.Write(s.CA.CertPEM)
