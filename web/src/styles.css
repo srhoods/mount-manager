@@ -134,3 +134,9 @@ table.clickable tbody tr:hover { background: var(--surface-2) }
 .toolbar.filters input { max-width: 260px; flex: 1 1 180px }
 .toolbar.filters select { flex: 0 0 auto }
 .head-right { display: flex; align-items: center; gap: 16px } .head-right small { color: var(--muted) }
+
+/* search box above a checklist (Groups editor) */
+.list-filter { display: flex; align-items: center; gap: 14px; margin: 6px 0 }
+.list-filter input { flex: 1 }
+.list-filter label.check { white-space: nowrap }
+label.check .src { margin-left: auto; padding-left: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 45% }

@@ -2,6 +2,9 @@ import { FormEvent, useMemo, useState } from 'react'
 import { api, Group, HostBrief, Template } from '../api'
 import { Empty, ErrorBox, Modal, useLoad, useToast } from '../ui'
 
+// Long checklists render at most this many rows; the search box narrows the rest.
+const MAX_ROWS = 200
+
 function compile(rx: string): RegExp | null | 'invalid' {
   if (!rx) return null
   try { return new RegExp(rx) } catch { return 'invalid' }
@@ -16,10 +19,20 @@ function Editor({ initial, groups, templates, hosts, onClose, onSaved }: {
   const [tpl, setTpl] = useState(new Set(initial?.templates ?? []))
   const [mem, setMem] = useState(new Set(initial?.members ?? []))
   const [q, setQ] = useState('')
+  const [mq, setMq] = useState(''), [onlySel, setOnlySel] = useState(false)
   const [err, setErr] = useState<string | null>(null), [busy, setBusy] = useState(false)
   const re = compile(rx)
   const matches = useMemo(() => re && re !== 'invalid' ? hosts.filter(h => re.test(h.hostname)) : [], [re, hosts])
   const toggle = (s: Set<string>, set: (x: Set<string>) => void, v: string) => { const n = new Set(s); n.has(v) ? n.delete(v) : n.add(v); set(n) }
+
+  // Mounts matching the search (name, source, mountpoint or type) and, optionally, only those already selected.
+  // Selections are kept in `tpl`, so filtering never drops a ticked mount.
+  const mountMatches = useMemo(() => {
+    const n = mq.trim().toLowerCase()
+    return templates.filter(t => (!onlySel || tpl.has(t.name)) && (!n || [t.name, t.source, t.mountpoint, t.fstype].some(v => v.toLowerCase().includes(n))))
+  }, [templates, mq, onlySel, tpl])
+  const mountRows = mountMatches.slice(0, MAX_ROWS)
+  const selectedNotShown = tpl.size - mountRows.filter(t => tpl.has(t.name)).length
 
   // Mountpoint conflicts within this group: two selected mounts sharing a mountpoint.
   const conflicts = useMemo(() => {
@@ -56,21 +69,30 @@ function Editor({ initial, groups, templates, hosts, onClose, onSaved }: {
         </label>
         {re === 'invalid' ? <p className="err-text small">Invalid regular expression.</p>
           : re ? <p className="hint">Matches {matches.length} enrolled host{matches.length === 1 ? '' : 's'}{matches.length ? `: ${matches.slice(0, 6).map(h => h.hostname).join(', ')}${matches.length > 6 ? '…' : ''}` : ''}. Hosts that enrol later are added automatically.</p> : null}
-        <h3>Mounts</h3>
+        <h3>Mounts <small className="muted">({tpl.size} selected)</small></h3>
         {templates.length === 0 ? <Empty>Create a mount first.</Empty> : (
-          <div className="checks">{templates.map(t => (
-            <label key={t.id} className="check"><input type="checkbox" checked={tpl.has(t.name)} onChange={() => toggle(tpl, setTpl, t.name)} />
-              <b>{t.name}</b><span className="muted mono small">{t.mountpoint}</span></label>
-          ))}</div>
+          <>
+            <div className="list-filter">
+              <input placeholder="Search name, source, mountpoint or type…" aria-label="Search mounts" value={mq} onChange={e => setMq(e.target.value)} />
+              <label className="check inline"><input type="checkbox" checked={onlySel} onChange={e => setOnlySel(e.target.checked)} />Selected only</label>
+            </div>
+            <div className="checks" role="group" aria-label="Mounts">{mountRows.length === 0 ? <Empty>{onlySel && !mq ? 'No mounts selected.' : 'No mounts match.'}</Empty> : mountRows.map(t => (
+              <label key={t.id} className="check"><input type="checkbox" checked={tpl.has(t.name)} onChange={() => toggle(tpl, setTpl, t.name)} />
+                <b>{t.name}</b><span className="muted small">{t.fstype}</span><span className="muted mono small">{t.mountpoint}</span><span className="muted mono small src">{t.source}</span></label>
+            ))}</div>
+            {mountMatches.length > MAX_ROWS && <p className="hint">Showing the first {MAX_ROWS} of {mountMatches.length.toLocaleString()} matching mounts. Type in the search box to narrow the list.</p>}
+            {selectedNotShown > 0 && <p className="hint">{selectedNotShown} selected mount{selectedNotShown === 1 ? ' is' : 's are'} not shown (hidden by the search or the row limit) and will stay selected.</p>}
+          </>
         )}
         {conflicts.length > 0 && <p className="err-text small">Mounts in this group share a mountpoint: {conflicts.join('; ')}. Only one will apply.</p>}
         {overlap.length > 0 && <p className="warn-text small">Same priority as {overlap.map(g => g.name).join(', ')} with an overlapping mountpoint — the winner is not well-defined. Use different priorities.</p>}
         <h3>Static members <small className="muted">({mem.size})</small></h3>
         <input placeholder="Filter hosts…" value={q} onChange={e => setQ(e.target.value)} />
-        <div className="checks scroll">{shownHosts.length === 0 ? <Empty>No hosts.</Empty> : shownHosts.map(h => (
+        <div className="checks scroll">{shownHosts.length === 0 ? <Empty>No hosts.</Empty> : shownHosts.slice(0, MAX_ROWS).map(h => (
           <label key={h.id} className="check"><input type="checkbox" checked={mem.has(h.hostname)} onChange={() => toggle(mem, setMem, h.hostname)} />{h.hostname}
             {re && re !== 'invalid' && re.test(h.hostname) && <span className="muted small">(also matches regex)</span>}</label>
         ))}</div>
+        {shownHosts.length > MAX_ROWS && <p className="hint">Showing the first {MAX_ROWS} of {shownHosts.length.toLocaleString()} hosts. Type in the filter to narrow the list; selected hosts stay selected.</p>}
         <ErrorBox err={err} />
         <footer><button type="button" onClick={onClose}>Cancel</button><button className="primary" disabled={busy || !name || re === 'invalid'}>{busy ? 'Saving…' : 'Save'}</button></footer>
       </form>
