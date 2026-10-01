@@ -310,7 +310,8 @@ mmctl group add-template <group-id> <mount-id>
   5 minutes): the agent unmounts and remounts. A mount that is busy is reported as *pending* and retried.
 - The web UI (Mounts and Groups pages) does the same and previews which hosts a regex matches. **Clone** on the Mounts page
   copies a mount under a new name (it is not added to any group; use Edit to change what differs). Mount options show when you hover over a
-  row. Cloning never overwrites: a name that is already taken is refused.
+  row. The Mounts page is paginated like Hosts (25, 50, 100 or 250 rows) and searches the name, source and mountpoint separately (case-insensitive substring
+  matches) with a type drop-down; the filters combine, and `mmctl mount ls --name … --source … --mountpoint … --type …` does the same. Cloning never overwrites: a name that is already taken is refused.
 - Where mounts are allowed is enforced **on each host** (see 3.4), not just by the server.
 
 ### 2.8 Upgrades

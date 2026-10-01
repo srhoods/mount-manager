@@ -5,6 +5,17 @@ Versioning: one `VERSION` for the agent, server and CLI RPMs. Bump the **minor**
 unchanged version, and requires a `## <version>` entry here. The RPM *Release* only changes for packaging-only
 respins (it is 1 for every new version).
 
+## 0.5.0
+### Added
+- **Mounts page: pagination and search.** The same 25 / 50 / 100 / 250 rows-per-page pager as the Hosts page, plus separate
+  search boxes for name, source and mountpoint and a type drop-down (nfs, nfs4, wekafs). The filters combine, the page resets
+  when they change, and "Clear filters" resets them. Searching and paging happen on the server, so the page stays quick with
+  thousands of mounts. `GET /api/templates` accepts `name`, `source`, `mountpoint`, `type`, `limit` and `offset` and returns
+  `X-Total-Count` (without parameters it still returns everything, so existing callers are unaffected).
+  `mmctl mount ls` gains `--name`, `--source`, `--mountpoint`, `--type`, `--limit` and `--offset`.
+### Changed
+- Mounts are listed in case-insensitive name order regardless of the database's collation.
+
 ## 0.4.0
 ### Added
 - **Clone a mount.** Each row on the Mounts page has a Clone button that asks for the name of the new mount and copies
