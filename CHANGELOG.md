@@ -5,6 +5,25 @@ Versioning: one `VERSION` for the agent, server and CLI RPMs. Bump the **minor**
 unchanged version, and requires a `## <version>` entry here. The RPM *Release* only changes for packaging-only
 respins (it is 1 for every new version).
 
+## 0.4.0
+### Added
+- **Clone a mount.** Each row on the Mounts page has a Clone button that asks for the name of the new mount and copies
+  the type, source, mountpoint and options. The copy is not added to any group and is changed through the usual Edit.
+  Cloning never overwrites: an existing name is refused (`POST /api/templates/{id}/clone`, `mmctl mount clone`). Anyone who
+  can edit mounts (administrators and operators) can clone.
+- Separate agent timeout for `wekafs`: `mount_timeout_wekafs` (default **120 s**; `mount_timeout` stays 60 s for NFS). The
+  first Weka mount on a host compiles the client driver and starts the Weka container, which previously timed out.
+### Changed
+- **Templates are now called Mounts** in the web UI (navigation, Groups, dialogs), the CLI (`mmctl mount ...`; `mmctl template ...`
+  still works) and the documentation. The REST API paths (`/api/templates`) and stored audit action names are unchanged.
+  Old `#/templates` bookmarks open the Mounts page.
+- The Mounts page no longer has an Options column; the options appear when hovering over (or focusing) a mount.
+- Pages use the full width of the window instead of stopping at 1,500 px, which suits high-resolution monitors; wide
+  dialogs are larger too.
+### Fixed
+- Creating a new mount with the name of an existing one silently replaced the existing mount. The New dialog now refuses it
+  (Edit changes a mount, Clone copies it).
+
 ## 0.3.4
 ### Fixed
 - `mmserver -ldap-check` appeared to hang: with no `MM_LDAP_TEST_PASSWORD` it silently waited for a password on standard

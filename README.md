@@ -5,7 +5,7 @@ minutes and adds, updates or removes mounts exactly as defined, then reports bac
 "push mounts with a nightly configuration-management run" with continuous, verified convergence and one place to
 see the state of every host.
 
-- **Templates and groups.** A template defines one mount. Groups attach templates to hosts, either by explicit
+- **Mounts and groups.** A mount defines what to mount and where. Groups attach mounts to hosts, either by explicit
   membership or by a regular expression on the hostname. When groups overlap, an explicit priority decides.
 - **Safe updates.** Changing a mount option means unmount, then remount. If the unmount fails (open files), the old
   mount stays in place, the host is shown as *pending* with the reason, and the agent keeps retrying.
@@ -63,9 +63,9 @@ The full procedure, with production notes and troubleshooting, is in **[docs/INS
 4. **Define mounts.**
 
    ```bash
-   mmctl template set data nfs01:/export/data /mnt/data --type nfs --opts rw,_netdev,hard
+   mmctl mount set data nfs01:/export/data /mnt/data --type nfs --opts rw,_netdev,hard
    mmctl group set render-farm --priority 100 --regex '^render-\d+\.example\.com$'
-   mmctl group add-template <group-id> <template-id>
+   mmctl group add-template <group-id> <mount-id>
    ```
 
 5. **Enrol a host.** Create a token (`mmctl token create --hours 48 --uses 50`), install `mountmgr-agent`, set
@@ -104,7 +104,7 @@ cd web && npm ci && npm run build                     # builds the UI into the s
 
 ## Status
 
-Version 0.2.x. Working and tested on Rocky Linux 9: enrolment and mTLS, template and group resolution, safe
+Version 0.4.x. Working and tested on Rocky Linux 9: enrolment and mTLS, mount and group resolution, safe
 remounts, adoption of existing mounts, LDAPS sign-in, the web UI and RPM packaging.
 
 Known limitations and planned work:

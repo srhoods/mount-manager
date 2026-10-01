@@ -280,23 +280,25 @@ chown root:mmserver ldap.json ldap-bind.password; chmod 0640 ldap.json ldap-bind
 - Enable by uncommenting `MM_LDAP_CONFIG=/etc/mountmgr-server/ldap.json` in `server.env` and running
   `systemctl restart mountmgr-server`. The log shows `directory login enabled`.
 
-Roles: `readonly` can view everything; `operator` can also change templates, groups, memberships and hosts;
+Roles: `readonly` can view everything; `operator` can also change mounts, groups, memberships and hosts;
 `admin` can also create enrolment tokens. Five failed sign-ins for one user from one address block further
 attempts for five minutes. Every sign-in, denial and failure is written to the audit log.
 
 ### 2.7 Define what to mount
 
-Mounts are defined by **templates**, applied to hosts through **groups**.
+Mounts are defined as **mounts** (one per filesystem to mount), applied to hosts through **groups**. (Older releases called a mount a
+"template"; the `mmctl template` command and the REST paths under `/api/templates` still work.)
 
 ```bash
-# a template = one mount (types: nfs, nfs4, wekafs)
-mmctl template set data  nfs01:/export/data   /mnt/data --type nfs  --opts rw,_netdev,hard
-mmctl template set fast  weka01/fs1           /sqpc     --type wekafs --opts rw
+# a mount = one filesystem (types: nfs, nfs4, wekafs)
+mmctl mount set data  nfs01:/export/data   /mnt/data --type nfs  --opts rw,_netdev,hard
+mmctl mount set fast  weka01/fs1           /sqpc     --type wekafs --opts rw
+mmctl mount clone data data-archive         # copy a mount under a new name, then change what differs with 'mount set'
 
-# a group = a set of templates + members; membership is by explicit host and/or hostname regex
+# a group = a set of mounts + members; membership is by explicit host and/or hostname regex
 mmctl group set render-farm --priority 100 --regex '^render-\d+\.example\.com$'
-mmctl group ls                                 # note the group id and template ids
-mmctl group add-template <group-id> <template-id>
+mmctl group ls                                 # note the group id and mount ids
+mmctl group add-template <group-id> <mount-id>
 ```
 
 - **Priority:** if a host is in several groups that define the *same mountpoint*, the group with the higher
@@ -304,9 +306,11 @@ mmctl group add-template <group-id> <template-id>
 - **Regex:** unanchored Go (RE2) syntax matched against the host's name as the agent reports it (normally the
   FQDN). Anchor with `^…$` unless you mean a substring. New hosts that match join automatically the first time
   they poll.
-- **Changing a template** (say, a mount option) rolls out to every host using it on its next poll (within about
+- **Changing a mount** (say, a mount option) rolls out to every host using it on its next poll (within about
   5 minutes): the agent unmounts and remounts. A mount that is busy is reported as *pending* and retried.
-- The web UI (Templates and Groups pages) does the same and previews which hosts a regex matches.
+- The web UI (Mounts and Groups pages) does the same and previews which hosts a regex matches. **Clone** on the Mounts page
+  copies a mount under a new name (it is not added to any group; use Edit to change what differs). Mount options show when you hover over a
+  row. Cloning never overwrites: a name that is already taken is refused.
 - Where mounts are allowed is enforced **on each host** (see 3.4), not just by the server.
 
 ### 2.8 Upgrades
@@ -426,13 +430,17 @@ nothing to mount ("No mounts are assigned to this host" in the UI).
   `/etc/sudoers.d/`; the packaged one is replaced on upgrade). A refused mount shows in the UI as failed with the
   reason.
 - Pre-existing mounts (for example from Ansible) at the same mountpoint are **adopted, not disturbed**, when
-  the source matches (NFS) or the type matches (wekafs); otherwise the agent replaces them to match the template.
+  the source matches (NFS) or the type matches (wekafs); otherwise the agent replaces them to match the mount definition.
   It never unmounts anything it did not mount itself.
 - Every action is logged to syslog (`/var/log/messages`) as `action=… mountpoint=… result=…` and reported to
   the server's audit log.
 
 ### 3.6 Behaviour worth knowing
 
+- **Slow first Weka mount:** the first `wekafs` mount on a host compiles the client driver and starts the Weka container, so
+  the agent allows `mount_timeout_wekafs` (default 120 seconds) for it, against `mount_timeout` (default 60) for NFS.
+  Both are set in `agent.conf`. If a mount still times out, the root mount process keeps running in the background, so the
+  next cycle finds it mounted and adopts it.
 - **Changing a mount that is in use:** the agent unmounts first, then remounts. If the unmount fails (open
   files), the old mount is left in place, the host shows **Pending** with the reason, and the agent retries
   every `retry_interval` (default 900 s).
@@ -459,7 +467,7 @@ nothing to mount ("No mounts are assigned to this host" in the UI).
 | `mount … result=failed error="…"` | The mount command's own error, e.g. name resolution, `Connection timed out`, `unknown filesystem type 'wekafs'` (driver not installed). |
 | `umount … result=busy` / host shows **Pending** | Something has files open on the old mount; it is retried automatically. `fuser -vm <mountpoint>` finds the culprit. |
 | `sudo: a password is required` | `/etc/sudoers.d/mountmgr` is missing or altered, or the command is outside its rules (for example a mountpoint the sudoers file does not cover). |
-| Host enrolled but shows no mounts | It matches no group. Check the regex against the exact hostname (`mmctl host ls`), and that the group has templates. |
+| Host enrolled but shows no mounts | It matches no group. Check the regex against the exact hostname (`mmctl host ls`), and that the group has mounts. |
 
 Run the agent once in the foreground for detailed output: `systemctl stop mountmgr-agent; runuser -u mountmgr -- mmd -f -1`.
 
