@@ -1,6 +1,6 @@
-import { FormEvent, useState } from 'react'
+import { FormEvent, useEffect, useState } from 'react'
 import { api, Template } from '../api'
-import { Empty, ErrorBox, Modal, useLoad, useToast } from '../ui'
+import { Empty, ErrorBox, Modal, Pager, useLoad, usePageSize, useToast } from '../ui'
 
 const blank = { name: '', fstype: 'nfs', source: '', mountpoint: '', options: 'rw,_netdev,hard' }
 
@@ -61,15 +61,28 @@ function CloneDialog({ src, onClose, onCloned }: { src: Template; onClose: () =>
 
 interface Tip { x: number; y: number; m: Template }
 
+const TYPES = ['nfs', 'nfs4', 'wekafs']
+
 export default function Mounts({ canWrite }: { canWrite: boolean }) {
-  const t = useLoad(api.templates)
+  const [fName, setFName] = useState(''), [fSource, setFSource] = useState(''), [fMount, setFMount] = useState(''), [fType, setFType] = useState('')
+  const [size, setSizeRaw] = usePageSize('mm.mounts.pageSize'), [page, setPage] = useState(0)
+  const t = useLoad(() => api.mounts({ name: fName, source: fSource, mountpoint: fMount, type: fType, limit: size, offset: page * size }), 0, [fName, fSource, fMount, fType, size, page])
+  const all = useLoad(api.templates)   // every name, so New can refuse a name that already exists
   const [edit, setEdit] = useState<Template | null | 'new'>(null)
   const [clone, setClone] = useState<Template | null>(null)
   const [tip, setTip] = useState<Tip | null>(null)
   const { toast, show } = useToast()
+  const total = t.data?.total ?? 0
+  const rows = t.data?.items ?? []
+  const filtered = !!(fName || fSource || fMount || fType)
+  const lastPage = Math.max(0, Math.ceil(total / size) - 1)
+  useEffect(() => { if (t.data && page > lastPage) setPage(lastPage) }, [t.data, page, lastPage])   // e.g. after deleting the last row of a page
+  const reload = () => { t.reload(); all.reload() }
+  const filter = (set: (v: string) => void) => (e: { target: { value: string } }) => { set(e.target.value); setPage(0) }
+  const clear = () => { setFName(''); setFSource(''); setFMount(''); setFType(''); setPage(0) }
   const del = async (x: Template) => {
     if (!confirm(`Delete mount “${x.name}”? Hosts will unmount it.`)) return
-    try { await api.deleteTemplate(x.id); t.reload(); show('Mount deleted') } catch (e) { show((e as Error).message) }
+    try { await api.deleteTemplate(x.id); reload(); show('Mount deleted') } catch (e) { show((e as Error).message) }
   }
   // options are shown on hover or keyboard focus instead of taking a column
   const showTip = (e: React.MouseEvent | React.FocusEvent, m: Template) => {
@@ -79,22 +92,33 @@ export default function Mounts({ canWrite }: { canWrite: boolean }) {
   }
   return (
     <>
-      <div className="page-head"><h1>Mounts</h1>{canWrite && <button className="primary" onClick={() => setEdit('new')}>New mount</button>}</div>
+      <div className="page-head"><h1>Mounts</h1>
+        <span className="head-right">{t.data && <small>{total.toLocaleString()} {filtered ? 'matching' : 'mounts'}</small>}{canWrite && <button className="primary" onClick={() => setEdit('new')}>New mount</button>}</span></div>
+      <div className="toolbar filters">
+        <input placeholder="Search name…" aria-label="Search by name" value={fName} onChange={filter(setFName)} />
+        <input placeholder="Search source…" aria-label="Search by source" value={fSource} onChange={filter(setFSource)} />
+        <input placeholder="Search mountpoint…" aria-label="Search by mountpoint" value={fMount} onChange={filter(setFMount)} />
+        <select value={fType} onChange={filter(setFType)} aria-label="Filter by type">
+          <option value="">All types</option>{TYPES.map(x => <option key={x} value={x}>{x}</option>)}
+        </select>
+        {filtered && <button onClick={clear}>Clear filters</button>}
+      </div>
       <ErrorBox err={t.error} />
       <div className="card flush">
-        {!t.data ? <Empty>Loading…</Empty> : t.data.length === 0 ? <Empty>No mounts yet. A mount defines what to mount and where; attach it to groups to deploy it.</Empty> : (
-          <table className="clickable"><thead><tr><th>Name</th><th>Type</th><th>Source</th><th>Mountpoint</th><th>Ver</th>{canWrite && <th />}</tr></thead><tbody>
-            {t.data.map(x => (
+        {!t.data ? <Empty>Loading…</Empty> : rows.length === 0 ? <Empty>{filtered ? 'No mounts match these filters.' : 'No mounts yet. A mount defines what to mount and where; attach it to groups to deploy it.'}</Empty> : (
+          <div className="table-scroll"><table className="clickable"><thead><tr><th>Name</th><th>Type</th><th>Source</th><th>Mountpoint</th><th>Ver</th>{canWrite && <th />}</tr></thead><tbody>
+            {rows.map(x => (
               <tr key={x.id} tabIndex={0} onMouseEnter={e => showTip(e, x)} onMouseMove={e => showTip(e, x)} onMouseLeave={() => setTip(null)} onFocus={e => showTip(e, x)} onBlur={() => setTip(null)}>
                 <td><b>{x.name}</b></td><td>{x.fstype}</td><td className="mono">{x.source}</td><td className="mono">{x.mountpoint}</td><td className="muted">{x.version}</td>
                 {canWrite && <td className="actions"><button onClick={() => setClone(x)}>Clone</button><button onClick={() => setEdit(x)}>Edit</button><button className="danger" onClick={() => del(x)}>Delete</button></td>}</tr>
             ))}
-          </tbody></table>
+          </tbody></table></div>
         )}
+        {t.data && <Pager total={total} page={page} size={size} noun="mounts" onPage={setPage} onSize={n => { setSizeRaw(n); setPage(0) }} />}
       </div>
       {tip && <div className="tip" role="tooltip" style={{ left: tip.x, top: tip.y }}><span className="muted">Options</span> <span className="mono">{tip.m.options || '(none)'}</span></div>}
-      {edit && <Editor initial={edit === 'new' ? null : edit} existing={(t.data ?? []).map(x => x.name)} onClose={() => setEdit(null)} onSaved={() => { setEdit(null); t.reload(); show('Mount saved') }} />}
-      {clone && <CloneDialog src={clone} onClose={() => setClone(null)} onCloned={name => { setClone(null); t.reload(); show(`Cloned as “${name}”`) }} />}
+      {edit && <Editor initial={edit === 'new' ? null : edit} existing={(all.data ?? []).map(x => x.name)} onClose={() => setEdit(null)} onSaved={() => { setEdit(null); reload(); show('Mount saved') }} />}
+      {clone && <CloneDialog src={clone} onClose={() => setClone(null)} onCloned={name => { setClone(null); reload(); show(`Cloned as “${name}”`) }} />}
       {toast}
     </>
   )

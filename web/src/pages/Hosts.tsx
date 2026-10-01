@@ -1,10 +1,8 @@
 import { useEffect, useState } from 'react'
 import { api, Host } from '../api'
-import { Badge, Empty, ErrorBox, fmtTime, Modal, timeAgo, useLoad, useToast } from '../ui'
+import { Badge, Empty, ErrorBox, fmtTime, Modal, Pager, timeAgo, useLoad, usePageSize, useToast } from '../ui'
 
-const PAGE_SIZES = [25, 50, 100, 250]
 const SIZE_KEY = 'mm.hosts.pageSize'
-const loadSize = () => { try { const n = parseInt(localStorage.getItem(SIZE_KEY) || '', 10); return PAGE_SIZES.includes(n) ? n : 50 } catch { return 50 } }
 
 function HostDetail({ host, canWrite, onClose, onDeleted }: { host: Host; canWrite: boolean; onClose: () => void; onDeleted: () => void }) {
   const d = useLoad(() => api.host(host.id), 15000, [host.id])
@@ -49,39 +47,16 @@ function HostDetail({ host, canWrite, onClose, onDeleted }: { host: Host; canWri
   )
 }
 
-function Pager({ total, page, size, onPage, onSize }: { total: number; page: number; size: number; onPage: (p: number) => void; onSize: (s: number) => void }) {
-  const pages = Math.max(1, Math.ceil(total / size))
-  const from = total === 0 ? 0 : page * size + 1, to = Math.min(total, (page + 1) * size)
-  return (
-    <div className="pager">
-      <span className="muted">{total === 0 ? 'No hosts' : `Showing ${from.toLocaleString()}–${to.toLocaleString()} of ${total.toLocaleString()}`}</span>
-      <span className="spacer" />
-      <label className="inline">Rows per page
-        <select value={size} onChange={e => onSize(parseInt(e.target.value, 10))} aria-label="Rows per page">
-          {PAGE_SIZES.map(n => <option key={n} value={n}>{n}</option>)}
-        </select>
-      </label>
-      <div className="pager-nav" role="navigation" aria-label="Pagination">
-        <button onClick={() => onPage(0)} disabled={page === 0} aria-label="First page">«</button>
-        <button onClick={() => onPage(page - 1)} disabled={page === 0} aria-label="Previous page">‹ Prev</button>
-        <span className="pager-pos">Page {(page + 1).toLocaleString()} of {pages.toLocaleString()}</span>
-        <button onClick={() => onPage(page + 1)} disabled={page >= pages - 1} aria-label="Next page">Next ›</button>
-        <button onClick={() => onPage(pages - 1)} disabled={page >= pages - 1} aria-label="Last page">»</button>
-      </div>
-    </div>
-  )
-}
-
 export default function Hosts({ canWrite }: { canWrite: boolean }) {
   const [q, setQ] = useState(''), [filter, setFilter] = useState('all'), [sel, setSel] = useState<Host | null>(null)
-  const [size, setSizeState] = useState(loadSize), [page, setPage] = useState(0)
+  const [size, setSizeRaw] = usePageSize(SIZE_KEY), [page, setPage] = useState(0)
   const hosts = useLoad(() => api.hosts({ q, state: filter, limit: size, offset: page * size }), 15000, [q, filter, size, page])
   const { toast, show } = useToast()
   const total = hosts.data?.total ?? 0
   const rows = hosts.data?.items ?? []
   const lastPage = Math.max(0, Math.ceil(total / size) - 1)
   useEffect(() => { if (hosts.data && page > lastPage) setPage(lastPage) }, [hosts.data, page, lastPage])   // e.g. after hosts were removed
-  const setSize = (n: number) => { try { localStorage.setItem(SIZE_KEY, String(n)) } catch { /* ignore */ } setSizeState(n); setPage(0) }
+  const setSize = (n: number) => { setSizeRaw(n); setPage(0) }
   return (
     <>
       <div className="page-head"><h1>Hosts</h1><small>{hosts.data ? `${total.toLocaleString()} ${q || filter !== 'all' ? 'matching' : 'enrolled'}` : ''}</small></div>
@@ -103,7 +78,7 @@ export default function Hosts({ canWrite }: { canWrite: boolean }) {
             ))}
           </tbody></table></div>
         )}
-        {hosts.data && <Pager total={total} page={page} size={size} onPage={setPage} onSize={setSize} />}
+        {hosts.data && <Pager total={total} page={page} size={size} noun="hosts" onPage={setPage} onSize={setSize} />}
       </div>
       {sel && <HostDetail key={sel.id} host={sel} canWrite={canWrite} onClose={() => setSel(null)} onDeleted={() => { setSel(null); hosts.reload(); show('Host removed') }} />}
       {toast}

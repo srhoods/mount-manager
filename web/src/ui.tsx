@@ -89,3 +89,35 @@ export class ErrorBoundary extends Component<{ children: ReactNode }, { error: E
     )
   }
 }
+
+export const PAGE_SIZES = [25, 50, 100, 250]
+
+/** Page size chosen by the user, remembered per list in this browser. */
+export function usePageSize(key: string, fallback = 50): [number, (n: number) => void] {
+  const [size, setSize] = useState(() => { try { const n = parseInt(localStorage.getItem(key) || '', 10); return PAGE_SIZES.includes(n) ? n : fallback } catch { return fallback } })
+  return [size, (n: number) => { try { localStorage.setItem(key, String(n)) } catch { /* ignore */ } setSize(n) }]
+}
+
+/** "Showing 51-100 of 601", rows per page, and first / previous / next / last. */
+export function Pager({ total, page, size, noun, onPage, onSize }: { total: number; page: number; size: number; noun: string; onPage: (p: number) => void; onSize: (s: number) => void }) {
+  const pages = Math.max(1, Math.ceil(total / size))
+  const from = total === 0 ? 0 : page * size + 1, to = Math.min(total, (page + 1) * size)
+  return (
+    <div className="pager">
+      <span className="muted">{total === 0 ? `No ${noun}` : `Showing ${from.toLocaleString()}–${to.toLocaleString()} of ${total.toLocaleString()}`}</span>
+      <span className="spacer" />
+      <label className="inline">Rows per page
+        <select value={size} onChange={e => onSize(parseInt(e.target.value, 10))} aria-label="Rows per page">
+          {PAGE_SIZES.map(n => <option key={n} value={n}>{n}</option>)}
+        </select>
+      </label>
+      <div className="pager-nav" role="navigation" aria-label="Pagination">
+        <button onClick={() => onPage(0)} disabled={page === 0} aria-label="First page">«</button>
+        <button onClick={() => onPage(page - 1)} disabled={page === 0} aria-label="Previous page">‹ Prev</button>
+        <span className="pager-pos">Page {(page + 1).toLocaleString()} of {pages.toLocaleString()}</span>
+        <button onClick={() => onPage(page + 1)} disabled={page >= pages - 1} aria-label="Next page">Next ›</button>
+        <button onClick={() => onPage(pages - 1)} disabled={page >= pages - 1} aria-label="Last page">»</button>
+      </div>
+    </div>
+  )
+}

@@ -129,3 +129,8 @@ table.clickable tbody tr:hover { background: var(--surface-2) }
 .facts.compact > div { display: contents }
 .facts.compact dt { text-transform: none; letter-spacing: 0; font-size: 12px }
 .facts.compact dd { word-break: break-all }
+
+/* filter bars */
+.toolbar.filters input { max-width: 260px; flex: 1 1 180px }
+.toolbar.filters select { flex: 0 0 auto }
+.head-right { display: flex; align-items: center; gap: 16px } .head-right small { color: var(--muted) }

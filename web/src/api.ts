@@ -3,6 +3,7 @@ export interface Host { id: number; hostname: string; agent_version: string; las
 export interface HostBrief { id: number; hostname: string }
 export interface HostSummary { total: number; in_sync: number; pending: number; offline: number; unknown: number }
 export interface HostQuery { q?: string; state?: string; limit?: number; offset?: number }
+export interface MountQuery { name?: string; source?: string; mountpoint?: string; type?: string; limit?: number; offset?: number }
 export type TokenStatus = 'active' | 'expired' | 'used' | 'revoked'
 export interface EnrolToken {
   id: number; note: string; created_at: string; created_by: string; expires: string
@@ -65,7 +66,15 @@ export const api = {
   hostSummary: () => call<HostSummary>('GET', '/api/hosts/summary'),
   host: (id: number) => call<HostDetail>('GET', `/api/hosts/${id}/mounts`),
   deleteHost: (id: number) => call('DELETE', `/api/hosts/${id}`),
-  templates: () => call<Template[]>('GET', '/api/templates'),
+  templates: () => call<Template[]>('GET', '/api/templates'),   // everything (group editor, CLI-style callers)
+  // server-side search and pagination for the Mounts page; total is the number of mounts matching the filters
+  mounts: (p: MountQuery = {}) => {
+    const qs = new URLSearchParams()
+    for (const k of ['name', 'source', 'mountpoint', 'type'] as const) if (p[k]) qs.set(k, p[k]!)
+    if (p.limit) qs.set('limit', String(p.limit))
+    if (p.offset) qs.set('offset', String(p.offset))
+    return callFull<Template[]>('GET', `/api/templates?${qs}`).then(r => ({ items: r.data, total: r.total }))
+  },
   saveTemplate: (t: { name: string; fstype: string; source: string; mountpoint: string; options: string }) => call<{ id: number }>('POST', '/api/templates', t),
   deleteTemplate: (id: number) => call('DELETE', `/api/templates/${id}`),
   // copies a mount under a new name; never overwrites (409 if the name is taken); group assignments are not copied
