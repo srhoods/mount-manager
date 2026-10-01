@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/rhoods/mountmanager/internal/auth"
 	"github.com/rhoods/mountmanager/internal/ui"
 	"log"
@@ -28,6 +30,7 @@ func (s *Server) AdminMux() http.Handler {
 		"id", "name", "fstype", "source", "mountpoint", "options", "version")))
 	mux.HandleFunc("POST /api/templates", rw(s.putTemplate))
 	mux.HandleFunc("DELETE /api/templates/{id}", rw(s.del("templates")))
+	mux.HandleFunc("POST /api/templates/{id}/clone", rw(s.cloneTemplate))
 	mux.HandleFunc("GET /api/groups", ro(s.list(`SELECT g.id,g.name,g.priority,g.host_regex,
 	  COALESCE((SELECT array_agg(t.name ORDER BY t.name) FROM group_templates gt JOIN templates t ON t.id=gt.template_id WHERE gt.group_id=g.id),'{}') AS templates,
 	  COALESCE((SELECT array_agg(h.hostname ORDER BY h.hostname) FROM group_members m JOIN hosts h ON h.id=m.host_id WHERE m.group_id=g.id),'{}') AS members
@@ -488,4 +491,39 @@ func (s *Server) hostSummary(w http.ResponseWriter, r *http.Request) {
 		out[strings.ReplaceAll(st, "-", "_")] = n
 	}
 	jsonOut(w, 200, out)
+}
+
+// cloneTemplate copies a mount definition under a new name. Unlike POST /api/templates (which updates a mount that
+// already has that name), a clone never overwrites anything: an existing name is a 409. Group assignments are not
+// copied; the clone starts unattached and is changed through the normal edit.
+func (s *Server) cloneTemplate(w http.ResponseWriter, r *http.Request) {
+	id, _ := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	var req struct{ Name string }
+	if json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&req) != nil {
+		fail(w, 400, "bad request")
+		return
+	}
+	name := strings.TrimSpace(req.Name)
+	if name == "" || len(name) > 200 || strings.ContainsAny(name, "\t\r\n\x00") {
+		fail(w, 400, "a name of 1 to 200 characters, without control characters, is required")
+		return
+	}
+	var newID int64
+	var srcName string
+	err := s.DB.QueryRow(r.Context(), `WITH src AS (SELECT name, fstype, source, mountpoint, options FROM templates WHERE id=$1),
+	  ins AS (INSERT INTO templates(name, fstype, source, mountpoint, options)
+	          SELECT $2, fstype, source, mountpoint, options FROM src RETURNING id)
+	  SELECT ins.id, src.name FROM ins, src`, id, name).Scan(&newID, &srcName)
+	var pgErr *pgconn.PgError
+	switch {
+	case errors.As(err, &pgErr) && pgErr.Code == "23505":
+		fail(w, 409, fmt.Sprintf("a mount named %q already exists", name))
+	case errors.Is(err, pgx.ErrNoRows):
+		fail(w, 404, "no such mount")
+	case err != nil:
+		fail(w, 500, err.Error())
+	default:
+		s.audit(r.Context(), user(r), "", "template-clone", fmt.Sprintf("#%d %q -> #%d %q", id, srcName, newID, name))
+		jsonOut(w, 200, map[string]int64{"id": newID})
+	}
 }

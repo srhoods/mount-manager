@@ -595,3 +595,88 @@ func TestHostWithNoMountsReturnsEmptyLists(t *testing.T) {
 		}
 	}
 }
+
+func TestCloneMount(t *testing.T) {
+	s, ctx := testServer(t)
+	seedUser(t, s, ctx, "adm", "admin")
+	seedUser(t, s, ctx, "op", "operator")
+	seedUser(t, s, ctx, "ro", "readonly")
+	h := s.AdminMux()
+	adm, op, ro := loginTok(t, h, "adm"), loginTok(t, h, "op"), loginTok(t, h, "ro")
+	f := fx{s, ctx, t}
+	src := f.tpl("data", "nfs1:/data", "/mnt/data", "rw,_netdev,hard")
+	if _, err := s.DB.Exec(ctx, `UPDATE templates SET fstype='nfs4', version=7 WHERE id=$1`, src); err != nil {
+		t.Fatal(err)
+	}
+	g := f.group("everyone", 100, ".", src)
+	_ = g
+
+	post := func(tok, path, body string) (int, string) {
+		r := httptest.NewRequest("POST", path, strings.NewReader(body))
+		if tok != "" {
+			r.Header.Set("Authorization", "Bearer "+tok)
+		}
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		return w.Code, w.Body.String()
+	}
+	path := fmt.Sprintf("/api/templates/%d/clone", src)
+
+	code, body := post(adm, path, `{"name":"  data-copy  "}`)
+	if code != 200 {
+		t.Fatalf("clone: %d %s", code, body)
+	}
+	var out struct{ ID int64 }
+	json.Unmarshal([]byte(body), &out)
+	var name, fst, source, mp, opts string
+	var ver int
+	if err := s.DB.QueryRow(ctx, `SELECT name,fstype,source,mountpoint,options,version FROM templates WHERE id=$1`, out.ID).Scan(&name, &fst, &source, &mp, &opts, &ver); err != nil {
+		t.Fatal(err)
+	}
+	if out.ID == src || name != "data-copy" || fst != "nfs4" || source != "nfs1:/data" || mp != "/mnt/data" || opts != "rw,_netdev,hard" || ver != 1 {
+		t.Errorf("clone contents: id=%d %q %s %s %s %q v%d", out.ID, name, fst, source, mp, opts, ver)
+	}
+	// the clone starts unattached; the original keeps its group and version
+	var n int
+	s.DB.QueryRow(ctx, `SELECT count(*) FROM group_templates WHERE template_id=$1`, out.ID).Scan(&n)
+	if n != 0 {
+		t.Errorf("group assignments must not be copied (%d)", n)
+	}
+	s.DB.QueryRow(ctx, `SELECT version FROM templates WHERE id=$1`, src).Scan(&ver)
+	if ver != 7 {
+		t.Errorf("source changed: version %d", ver)
+	}
+
+	// never overwrites: an existing name (the source itself, or the clone) is a conflict and changes nothing
+	for _, nm := range []string{"data", "data-copy"} {
+		if code, _ := post(adm, path, fmt.Sprintf(`{"name":%q}`, nm)); code != 409 {
+			t.Errorf("clone onto existing %q: %d", nm, code)
+		}
+	}
+	s.DB.QueryRow(ctx, `SELECT count(*) FROM templates`).Scan(&n)
+	if n != 2 {
+		t.Errorf("templates after refused clones: %d", n)
+	}
+	// validation, unknown source, permissions
+	for _, bad := range []string{`{"name":""}`, `{"name":"   "}`, `{}`, `{"name":"a\tb"}`, `{"name":"` + strings.Repeat("x", 201) + `"}`, `not json`} {
+		if code, _ := post(adm, path, bad); code != 400 {
+			t.Errorf("body %.30q: %d", bad, code)
+		}
+	}
+	if code, _ := post(adm, "/api/templates/99999/clone", `{"name":"x"}`); code != 404 {
+		t.Errorf("unknown source: %d", code)
+	}
+	if code, _ := post(op, path, `{"name":"by-operator"}`); code != 200 {
+		t.Errorf("operators manage mounts and may clone: %d", code)
+	}
+	if code, _ := post(ro, path, `{"name":"by-readonly"}`); code != 403 {
+		t.Errorf("readonly clone: %d", code)
+	}
+	if code, _ := post("", path, `{"name":"anon"}`); code != 401 {
+		t.Errorf("anonymous clone: %d", code)
+	}
+	s.DB.QueryRow(ctx, `SELECT count(*) FROM audit WHERE action='template-clone'`).Scan(&n)
+	if n != 2 {
+		t.Errorf("clones should be audited (2 successful): %d", n)
+	}
+}

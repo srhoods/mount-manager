@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"text/tabwriter"
 )
@@ -32,9 +33,10 @@ var version = "dev"
 const usage = `usage: mmctl <command>
   version
   login <server-url> <username> [--ca file | --insecure]     (password from MM_PASSWORD or prompt-less stdin)
-  template ls | set <name> <source> <mountpoint> [--type nfs|nfs4] [--opts o1,o2] | rm <id>
+  mount ls | set <name> <source> <mountpoint> [--type nfs|nfs4|wekafs] [--opts o1,o2] | clone <id|name> <new-name> | rm <id>
+    (a mount was previously called a template; "mmctl template ..." still works)
   group ls | set <name> [--priority N] [--regex RE] | rm <id>
-  group add-template <group-id> <template-id> | rm-template <group-id> <template-id>
+  group add-template <group-id> <mount-id> | rm-template <group-id> <mount-id>
   group add-host <group-id> <host-id> | rm-host <group-id> <host-id>
   host ls [--q text] [--state in-sync|pending|offline|unknown|attention] [--limit N] [--offset N] | show <id> | rm <id>
   token create [--note text] [--hours N] [--uses N] | ls [--all] | revoke <id>
@@ -182,7 +184,7 @@ func main() {
 		b, _ := json.Marshal(cfg)
 		os.WriteFile(cfgPath, b, 0600)
 		fmt.Println("logged in")
-	case "template":
+	case "mount", "template":
 		switch sub() {
 		case "ls":
 			table(call("GET", "/api/templates", nil), "id", "name", "fstype", "source", "mountpoint", "options", "version")
@@ -192,6 +194,26 @@ func main() {
 			args = a
 			need(3)
 			fmt.Printf("%s\n", call("POST", "/api/templates", map[string]string{"name": args[0], "fstype": typ, "source": args[1], "mountpoint": args[2], "options": opts}))
+		case "clone":
+			need(2)
+			id := args[0]
+			if _, err := strconv.Atoi(id); err != nil { // allow the mount's name instead of its id
+				var rows []struct {
+					ID   int64
+					Name string
+				}
+				json.Unmarshal(call("GET", "/api/templates", nil), &rows)
+				id = ""
+				for _, r := range rows {
+					if r.Name == args[0] {
+						id = strconv.FormatInt(r.ID, 10)
+					}
+				}
+				if id == "" {
+					die("no mount named %q", args[0])
+				}
+			}
+			fmt.Printf("%s\n", call("POST", "/api/templates/"+id+"/clone", map[string]string{"name": args[1]}))
 		case "rm":
 			need(1)
 			call("DELETE", "/api/templates/"+args[0], nil)
