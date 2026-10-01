@@ -3,6 +3,7 @@
 # usage: mount -t TYPE [-o OPTS] SOURCE MOUNTPOINT
 echo "mount $*" >> "$MM_FAKE/calls.log"
 [ -e "$MM_FAKE/hang_mount" ] && sleep 30
+[ -e "$MM_FAKE/delay_mount" ] && sleep "$(cat "$MM_FAKE/delay_mount")"   # a slow but successful mount (e.g. first wekafs mount)
 if [ -e "$MM_FAKE/fail_mount" ]; then echo "mount.nfs: Connection timed out" >&2; exit 32; fi
 fst=""; opts=""
 while [ $# -gt 2 ]; do case "$1" in -t) fst=$2; shift 2;; -o) opts=$2; shift 2;; *) break;; esac; done

@@ -160,6 +160,35 @@ TEST(mount_timeout_kills_hung_mount)
 	CHECK(strstr(last_err[0], "timed out") != NULL);
 }
 
+TEST(wekafs_gets_a_longer_timeout_than_nfs)
+{
+	/* a slow first mount (driver compile, container start) succeeds for wekafs within its allowance, while the same
+	 * delay is a timeout for NFS */
+	C.mount_timeout = 1; C.mount_timeout_wekafs = 5;
+	sh("echo 2 > %s/delay_mount", FAKE);
+	desire("mount\tbackend0/fs1\t%s/w\twekafs\trw\nmount\tlumpy:/a\t%s/n\tnfs\trw\n", MP, MP);
+	reconcile();
+	{ int w = !strcmp(want[0].fst, "wekafs") ? 0 : 1, n = 1 - w;
+	  CHECK_STR(last_state[w], "ok");
+	  CHECK_STR(last_state[n], "failed");
+	  CHECK(strstr(last_err[n], "timed out after 1s") != NULL); }
+}
+
+TEST(wekafs_timeout_is_reported_with_its_own_limit)
+{
+	C.mount_timeout = 30; C.mount_timeout_wekafs = 1;
+	touch("hang_mount");
+	desire("mount\tbackend0/fs1\t%s/w\twekafs\trw\n", MP); reconcile();
+	CHECK_STR(last_state[0], "failed");
+	CHECK(strstr(last_err[0], "timed out after 1s") != NULL);
+}
+
+TEST(timeout_defaults)
+{
+	CHECK(mount_timeout_for("wekafs") == C.mount_timeout_wekafs);
+	CHECK(mount_timeout_for("nfs") == C.mount_timeout && mount_timeout_for("nfs4") == C.mount_timeout);
+}
+
 TEST(mount_removed_from_config_is_unmounted)
 {
 	desire("mount\tlumpy:/a\t%s/a\tnfs\trw\nmount\tlumpy:/b\t%s/b\tnfs\trw\n", MP, MP); reconcile();
@@ -276,7 +305,7 @@ TEST(mountpoint_allow_list)
 TEST(sqpc_default_paths)
 {
 	struct cfg saved = C;
-	struct cfg def = { "", "", "", "/mnt,/data,/sqpc", "/sqpc", "nfs,nfs4,wekafs", "", "", "", 300, 900, 0, 60 };
+	struct cfg def = { "", "", "", "/mnt,/data,/sqpc", "/sqpc", "nfs,nfs4,wekafs", "", "", "", 300, 900, 0, 60, 120 };
 	C = def;
 	CHECK(allowed_path("/sqpc"));                     /* exact */
 	CHECK(allowed_path("/sqpc/projects"));            /* below */
@@ -383,12 +412,13 @@ TEST(config_parsing)
 {
 	char p[400]; FILE *f;
 	snprintf(p, sizeof p, "%s/agent.conf", T); f = fopen(p, "w");
-	fputs("# comment\nserver=https://x:8443\ninterval=60\nuse_sudo=1\nallowed_mount_prefixes=/a,/b\nallowed_mount_exact=/c\nallowed_fstypes=nfs,wekafs\nserver_ca_file=/etc/pki/corp-ca.pem\n", f); fclose(f);
+	fputs("# comment\nserver=https://x:8443\ninterval=60\nuse_sudo=1\nallowed_mount_prefixes=/a,/b\nallowed_mount_exact=/c\nallowed_fstypes=nfs,wekafs\nserver_ca_file=/etc/pki/corp-ca.pem\nmount_timeout=45\nmount_timeout_wekafs=240\n", f); fclose(f);
 	CHECK(load_cfg(p) == 0);
 	CHECK_STR(C.server, "https://x:8443"); CHECK(C.interval == 60); CHECK(C.use_sudo == 1);
 	CHECK(allowed_path("/a/x") && allowed_path("/c") && !allowed_path("/d"));
 	CHECK(allowed_fstype("wekafs") && !allowed_fstype("nfs4"));
 	CHECK_STR(C.server_ca, "/etc/pki/corp-ca.pem");
+	CHECK(C.mount_timeout == 45 && C.mount_timeout_wekafs == 240);
 	CHECK(load_cfg("/nonexistent/agent.conf") < 0);
 }
 
@@ -396,12 +426,16 @@ int main(void)
 {
 	setenv("MM_ORIG_PATH", getenv("PATH") ? getenv("PATH") : "/usr/bin:/bin", 1);
 	printf("mmd mount logic tests\n");
+	if (C.mount_timeout != 60 || C.mount_timeout_wekafs != 120) { printf("  FAIL built-in timeouts must be 60s (default) and 120s (wekafs)\n"); return 1; }
 	RUN(parses_desired_state);
 	RUN(fresh_mount_then_idempotent);
 	RUN(option_change_unmounts_then_remounts);
 	RUN(busy_umount_is_pending_and_retried);
 	RUN(mount_failure_reports_error_and_honours_retry_interval);
 	RUN(mount_timeout_kills_hung_mount);
+	RUN(wekafs_gets_a_longer_timeout_than_nfs);
+	RUN(wekafs_timeout_is_reported_with_its_own_limit);
+	RUN(timeout_defaults);
 	RUN(mount_removed_from_config_is_unmounted);
 	RUN(busy_removal_keeps_tracking_for_next_cycle);
 	RUN(removals_happen_before_new_mounts);

@@ -32,9 +32,9 @@
 struct cfg {
 	char server[256], state_dir[256], token_file[256], allowed[256], allowed_exact[256], allowed_fst[128], ca_sha256[80];
 	char hostname[256], server_ca[256];
-	int interval, retry, use_sudo, mount_timeout;
+	int interval, retry, use_sudo, mount_timeout, mount_timeout_wekafs;
 } C = {"", "/var/lib/mountmgr", "/var/lib/mountmgr/enroll.token", "/mnt,/data,/sqpc", "/sqpc", "nfs,nfs4,wekafs", "", "", "",
-       300, 900, 0, 60};
+       300, 900, 0, 60, 120};
 
 static const char *mountinfo_path = "/proc/self/mountinfo"; /* overridable for tests */
 
@@ -81,7 +81,7 @@ static int load_cfg(const char *path)
 #define I(k,fld) if(!strcmp(line,k)) C.fld=atoi(v)
 		S("server",server); S("state_dir",state_dir); S("enroll_token_file",token_file);
 		S("allowed_mount_prefixes",allowed); S("allowed_mount_exact",allowed_exact); S("allowed_fstypes",allowed_fst); S("ca_sha256",ca_sha256); S("hostname",hostname); S("server_ca_file",server_ca);
-		I("interval",interval); I("retry_interval",retry); I("use_sudo",use_sudo); I("mount_timeout",mount_timeout);
+		I("interval",interval); I("retry_interval",retry); I("use_sudo",use_sudo); I("mount_timeout",mount_timeout); I("mount_timeout_wekafs",mount_timeout_wekafs);
 	}
 	fclose(f); return 0;
 }
@@ -361,7 +361,7 @@ static int is_mounted(const char *mp, char *src, size_t sl, char *fst, size_t fl
 }
 
 /* run argv (optionally via sudo), capture stderr (trimmed) into err. returns exit status (0 = ok) */
-static int run(char *const argv[], char *err, size_t el)
+static int run(char *const argv[], char *err, size_t el, int timeout)
 {
 	int pfd[2], st = 0, i, n = 0; pid_t pid; char *av[16]; time_t t0 = time(NULL); ssize_t r; size_t got = 0;
 	if (C.use_sudo) { av[n++] = "sudo"; av[n++] = "-n"; }
@@ -375,7 +375,7 @@ static int run(char *const argv[], char *err, size_t el)
 		pid_t w = waitpid(pid, &st, WNOHANG);
 		while ((r = read(pfd[0], err + got, el - 1 - got)) > 0) { got += r; if (got >= el - 1) break; }
 		if (w == pid) break;
-		if (time(NULL) - t0 > C.mount_timeout) { kill(pid, SIGKILL); waitpid(pid, &st, 0); snprintf(err, el, "timed out after %ds", C.mount_timeout); close(pfd[0]); return -2; }
+		if (time(NULL) - t0 > timeout) { kill(pid, SIGKILL); waitpid(pid, &st, 0); snprintf(err, el, "timed out after %ds", timeout); close(pfd[0]); return -2; }
 		usleep(100000);
 	}
 	while ((r = read(pfd[0], err + got, el - 1 - got)) > 0) got += r;
@@ -384,17 +384,24 @@ static int run(char *const argv[], char *err, size_t el)
 }
 
 static int do_umount(const char *mp, char *err, size_t el)
-{ char *av[] = {"umount", (char *)mp, NULL}; return run(av, err, el); }
+{ char *av[] = {"umount", (char *)mp, NULL}; return run(av, err, el, C.mount_timeout); }
+
+/* The first wekafs mount on a host compiles the client driver and starts the Weka container, which routinely takes
+ * longer than an NFS mount, so wekafs gets its own (longer) allowance. */
+static int mount_timeout_for(const char *fst)
+{
+	return !strcmp(fst, "wekafs") ? C.mount_timeout_wekafs : C.mount_timeout;
+}
 
 static int do_mount(const struct mnt *m, char *err, size_t el)
 {
 	char *av[10]; int n = 0; char mk[600];
 	snprintf(mk, sizeof mk, "%s", m->mp);
-	{ char *av2[] = {"mkdir", "-p", mk, NULL}; char e2[128]; run(av2, e2, sizeof e2); }
+	{ char *av2[] = {"mkdir", "-p", mk, NULL}; char e2[128]; run(av2, e2, sizeof e2, C.mount_timeout); }
 	av[n++] = "mount"; av[n++] = "-t"; av[n++] = (char *)m->fst;
 	if (m->opts[0]) { av[n++] = "-o"; av[n++] = (char *)m->opts; }
 	av[n++] = (char *)m->src; av[n++] = (char *)m->mp; av[n] = NULL;
-	return run(av, err, el);
+	return run(av, err, el, mount_timeout_for(m->fst));
 }
 
 static void setst(int i, const char *st, const char *e)
