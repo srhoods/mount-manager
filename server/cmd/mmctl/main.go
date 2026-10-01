@@ -33,7 +33,8 @@ var version = "dev"
 const usage = `usage: mmctl <command>
   version
   login <server-url> <username> [--ca file | --insecure]     (password from MM_PASSWORD or prompt-less stdin)
-  mount ls | set <name> <source> <mountpoint> [--type nfs|nfs4|wekafs] [--opts o1,o2] | clone <id|name> <new-name> | rm <id>
+  mount ls [--name text] [--source text] [--mountpoint text] [--type nfs|nfs4|wekafs] [--limit N] [--offset N]
+  mount set <name> <source> <mountpoint> [--type nfs|nfs4|wekafs] [--opts o1,o2] | clone <id|name> <new-name> | rm <id>
     (a mount was previously called a template; "mmctl template ..." still works)
   group ls | set <name> [--priority N] [--regex RE] | rm <id>
   group add-template <group-id> <mount-id> | rm-template <group-id> <mount-id>
@@ -187,7 +188,15 @@ func main() {
 	case "mount", "template":
 		switch sub() {
 		case "ls":
-			table(call("GET", "/api/templates", nil), "id", "name", "fstype", "source", "mountpoint", "options", "version")
+			nm, a := flagVal(args, "--name")
+			src, a := flagVal(a, "--source")
+			mp, a := flagVal(a, "--mountpoint")
+			ty, a := flagVal(a, "--type")
+			lim, a := flagVal(a, "--limit")
+			off, _ := flagVal(a, "--offset")
+			path := "/api/templates?name=" + url.QueryEscape(nm) + "&source=" + url.QueryEscape(src) + "&mountpoint=" + url.QueryEscape(mp) +
+				"&type=" + url.QueryEscape(ty) + "&limit=" + lim + "&offset=" + off
+			table(call("GET", path, nil), "id", "name", "fstype", "source", "mountpoint", "options", "version")
 		case "set":
 			typ, a := flagVal(args, "--type")
 			opts, a := flagVal(a, "--opts")

@@ -26,8 +26,7 @@ func (s *Server) AdminMux() http.Handler {
 	adm := func(h http.HandlerFunc) http.HandlerFunc { return s.auth("admin", h) }
 	ro := func(h http.HandlerFunc) http.HandlerFunc { return s.auth("readonly", h) }
 
-	mux.HandleFunc("GET /api/templates", ro(s.list(`SELECT id,name,fstype,source,mountpoint,options,version FROM templates ORDER BY name`,
-		"id", "name", "fstype", "source", "mountpoint", "options", "version")))
+	mux.HandleFunc("GET /api/templates", ro(s.listTemplates))
 	mux.HandleFunc("POST /api/templates", rw(s.putTemplate))
 	mux.HandleFunc("DELETE /api/templates/{id}", rw(s.del("templates")))
 	mux.HandleFunc("POST /api/templates/{id}/clone", rw(s.cloneTemplate))
@@ -526,4 +525,64 @@ func (s *Server) cloneTemplate(w http.ResponseWriter, r *http.Request) {
 		s.audit(r.Context(), user(r), "", "template-clone", fmt.Sprintf("#%d %q -> #%d %q", id, srcName, newID, name))
 		jsonOut(w, 200, map[string]int64{"id": newID})
 	}
+}
+
+// listTemplates serves the mount list. Optional query parameters: name, source and mountpoint (case-insensitive
+// substring matches), type (exact filesystem type), limit and offset (pagination; without limit everything is
+// returned). The number of matches, ignoring limit and offset, is returned in the X-Total-Count header.
+func (s *Server) listTemplates(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	typ := q.Get("type")
+	if typ != "" {
+		ok := false
+		for _, t := range SupportedFSTypes {
+			ok = ok || t == typ
+		}
+		if !ok {
+			fail(w, 400, "type must be one of "+strings.Join(SupportedFSTypes, ", "))
+			return
+		}
+	}
+	var limit *int64
+	if v := q.Get("limit"); v != "" {
+		n, err := strconv.ParseInt(v, 10, 64)
+		if err != nil || n < 1 || n > 1000 {
+			fail(w, 400, "limit must be between 1 and 1000")
+			return
+		}
+		limit = &n
+	}
+	offset, _ := strconv.ParseInt(q.Get("offset"), 10, 64)
+	if offset < 0 {
+		offset = 0
+	}
+	// strpos on lower-cased values: the search text is literal (no LIKE wildcards to escape)
+	const where = ` WHERE ($1 = '' OR strpos(lower(name), lower($1)) > 0) AND ($2 = '' OR strpos(lower(source), lower($2)) > 0)
+	  AND ($3 = '' OR strpos(lower(mountpoint), lower($3)) > 0) AND ($4 = '' OR fstype = $4)`
+	args := []any{q.Get("name"), q.Get("source"), q.Get("mountpoint"), typ}
+	var total int64
+	if err := s.DB.QueryRow(r.Context(), `SELECT count(*) FROM templates`+where, args...).Scan(&total); err != nil {
+		fail(w, 500, err.Error())
+		return
+	}
+	w.Header().Set("X-Total-Count", strconv.FormatInt(total, 10))
+	rows, err := s.DB.Query(r.Context(), `SELECT id,name,fstype,source,mountpoint,options,version FROM templates`+where+
+		` ORDER BY lower(name), name, id LIMIT $5 OFFSET $6`, append(args, limit, offset)...)
+	if err != nil {
+		fail(w, 500, err.Error())
+		return
+	}
+	defer rows.Close()
+	out := []map[string]any{}
+	for rows.Next() {
+		var id int64
+		var name, fst, src, mp, opts string
+		var ver int
+		if err := rows.Scan(&id, &name, &fst, &src, &mp, &opts, &ver); err != nil {
+			fail(w, 500, err.Error())
+			return
+		}
+		out = append(out, map[string]any{"id": id, "name": name, "fstype": fst, "source": src, "mountpoint": mp, "options": opts, "version": ver})
+	}
+	jsonOut(w, 200, out)
 }

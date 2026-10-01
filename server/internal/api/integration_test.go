@@ -680,3 +680,107 @@ func TestCloneMount(t *testing.T) {
 		t.Errorf("clones should be audited (2 successful): %d", n)
 	}
 }
+
+func TestMountsSearchAndPagination(t *testing.T) {
+	s, ctx := testServer(t)
+	seedUser(t, s, ctx, "ro", "readonly")
+	h := s.AdminMux()
+	tok := loginTok(t, h, "ro")
+	f := fx{s, ctx, t}
+	// 12 NFS mounts on nfs1/nfs2, 6 nfs4, 6 wekafs, plus names/paths containing LIKE wildcards
+	for i := 0; i < 12; i++ {
+		srv := "nfs1"
+		if i%2 == 1 {
+			srv = "nfs2"
+		}
+		f.tpl(fmt.Sprintf("data-%02d", i), fmt.Sprintf("%s:/export/data%02d", srv, i), fmt.Sprintf("/mnt/data%02d", i), "rw")
+	}
+	for i := 0; i < 6; i++ {
+		id := f.tpl(fmt.Sprintf("home-%02d", i), fmt.Sprintf("homesrv:/home/u%d", i), fmt.Sprintf("/home/u%d", i), "rw")
+		s.DB.Exec(ctx, `UPDATE templates SET fstype='nfs4' WHERE id=$1`, id)
+	}
+	for i := 0; i < 6; i++ {
+		id := f.tpl(fmt.Sprintf("Weka-%02d", i), fmt.Sprintf("backend0/fs%d", i), fmt.Sprintf("/sqpc/fs%d", i), "rw")
+		s.DB.Exec(ctx, `UPDATE templates SET fstype='wekafs' WHERE id=$1`, id)
+	}
+	f.tpl("100%_done", "pct:/p", "/mnt/pct", "rw") // % and _ must be treated literally
+
+	type mount struct {
+		Name, Fstype, Source, Mountpoint string
+	}
+	list := func(query string) (int, string, []mount) {
+		code, hdr, body := getJSON(t, h, "/api/templates"+query, tok)
+		var out []mount
+		if code == 200 {
+			if err := json.Unmarshal(body, &out); err != nil {
+				t.Fatalf("%s: %v %s", query, err, body)
+			}
+		}
+		return code, hdr.Get("X-Total-Count"), out
+	}
+	check := func(query, wantTotal string, wantRows int) []mount {
+		t.Helper()
+		code, total, rows := list(query)
+		if code != 200 || total != wantTotal || len(rows) != wantRows {
+			t.Errorf("%s: code=%d total=%s rows=%d, want total=%s rows=%d", query, code, total, len(rows), wantTotal, wantRows)
+		}
+		return rows
+	}
+
+	// no parameters: everything, ordered by name, with the count header
+	all := check("", "25", 25)
+	for i := 1; i < len(all); i++ {
+		if strings.ToLower(all[i-1].Name) > strings.ToLower(all[i].Name) { // case-insensitive, whatever the database collation
+			t.Errorf("not ordered by name: %s before %s", all[i-1].Name, all[i].Name)
+		}
+	}
+	// pages are disjoint and cover everything
+	seen := map[string]bool{}
+	for off := 0; off < 25; off += 10 {
+		want := 10
+		if off == 20 {
+			want = 5
+		}
+		for _, m := range check(fmt.Sprintf("?limit=10&offset=%d", off), "25", want) {
+			if seen[m.Name] {
+				t.Errorf("%s repeated across pages", m.Name)
+			}
+			seen[m.Name] = true
+		}
+	}
+	if len(seen) != 25 {
+		t.Errorf("pages covered %d mounts", len(seen))
+	}
+	check("?limit=10&offset=99", "25", 0)
+
+	// each search field on its own, case-insensitively and as a substring
+	check("?name=DATA-0", "10", 10)
+	check("?name=weka", "6", 6)
+	check("?source=nfs2", "6", 6)
+	check("?source=BACKEND0", "6", 6)
+	check("?mountpoint=/sqpc", "6", 6)
+	check("?mountpoint=data1", "2", 2)
+	// the type drop-down is an exact match
+	check("?type=nfs", "13", 13) // 12 data + the wildcard one
+	check("?type=nfs4", "6", 6)
+	check("?type=wekafs", "6", 6)
+	// fields combine (AND), and pagination applies to the filtered set
+	check("?name=data&source=nfs1", "6", 6)
+	check("?name=data&type=nfs4", "0", 0)
+	check("?type=nfs&mountpoint=/mnt&limit=5&offset=10", "13", 3)
+	// search text is literal: % and _ are not wildcards
+	if rows := check("?name=%25", "1", 1); rows[0].Name != "100%_done" {
+		t.Errorf("literal %%: %+v", rows)
+	}
+	check("?name=_", "1", 1)
+	check("?name=zzz", "0", 0)
+	// validation and access
+	for _, bad := range []string{"?type=ext4", "?limit=0", "?limit=nope", "?limit=5000"} {
+		if code, _, _ := list(bad); code != 400 {
+			t.Errorf("%s should be rejected: %d", bad, code)
+		}
+	}
+	if code, _, _ := getJSON(t, h, "/api/templates", ""); code != 401 {
+		t.Errorf("anonymous list: %d", code)
+	}
+}
