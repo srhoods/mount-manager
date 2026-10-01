@@ -3,16 +3,17 @@ import { api, getSession, setSession, setUnauthorizedHandler, Session } from './
 import { ErrorBox } from './ui'
 import Dashboard from './pages/Dashboard'
 import Hosts from './pages/Hosts'
-import Templates from './pages/Templates'
+import Mounts from './pages/Mounts'
 import Groups from './pages/Groups'
 import Enrol from './pages/Enrol'
 import Audit from './pages/Audit'
 
 const NAV = [
-  ['dashboard', 'Dashboard'], ['hosts', 'Hosts'], ['groups', 'Groups'], ['templates', 'Templates'], ['enrol', 'Enrolment'], ['audit', 'Audit log'],
+  ['dashboard', 'Dashboard'], ['hosts', 'Hosts'], ['groups', 'Groups'], ['mounts', 'Mounts'], ['enrol', 'Enrolment'], ['audit', 'Audit log'],
 ] as const
 
-const route = () => (location.hash.replace(/^#\/?/, '').split('/')[0] || 'dashboard')
+// '#/templates' was renamed '#/mounts'; keep old bookmarks working
+const route = () => { const r = location.hash.replace(/^#\/?/, '').split('/')[0] || 'dashboard'; return r === 'templates' ? 'mounts' : r }
 
 function Login({ onLogin }: { onLogin: (s: Session, keep: boolean) => void }) {
   const [keep, setKeep] = useState(true), [u, setU] = useState(''), [p, setP] = useState(''), [err, setErr] = useState<string | null>(null), [busy, setBusy] = useState(false)
@@ -56,7 +57,7 @@ export default function App() {
         {page === 'dashboard' && <Dashboard />}
         {page === 'hosts' && <Hosts canWrite={canWrite} />}
         {page === 'groups' && <Groups canWrite={canWrite} />}
-        {page === 'templates' && <Templates canWrite={canWrite} />}
+        {page === 'mounts' && <Mounts canWrite={canWrite} />}
         {page === 'enrol' && <Enrol canWrite={isAdmin} />}
         {page === 'audit' && <Audit />}
       </main>

@@ -68,6 +68,8 @@ export const api = {
   templates: () => call<Template[]>('GET', '/api/templates'),
   saveTemplate: (t: { name: string; fstype: string; source: string; mountpoint: string; options: string }) => call<{ id: number }>('POST', '/api/templates', t),
   deleteTemplate: (id: number) => call('DELETE', `/api/templates/${id}`),
+  // copies a mount under a new name; never overwrites (409 if the name is taken); group assignments are not copied
+  cloneTemplate: (id: number, name: string) => call<{ id: number }>('POST', `/api/templates/${id}/clone`, { name }),
   groups: () => call<Group[]>('GET', '/api/groups'),
   saveGroup: (g: { name: string; priority: number; host_regex: string }) => call<{ id: number }>('POST', '/api/groups', g),
   deleteGroup: (id: number) => call('DELETE', `/api/groups/${id}`),

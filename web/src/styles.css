@@ -29,12 +29,12 @@ nav a { padding: 9px 12px; border-radius: 8px; color: var(--text) } nav a:hover 
 nav a.active { background: var(--primary); color: var(--primary-fg); font-weight: 600 }
 .who { display: flex; justify-content: space-between; align-items: center; gap: 8px; border-top: 1px solid var(--border); padding-top: 12px }
 .who small { display: block; color: var(--muted) }
-main { padding: 24px 32px 48px; max-width: 1500px; width: 100%; margin: 0 auto; min-width: 0 }
+main { padding: 24px clamp(20px, 2.5vw, 56px) 48px; width: 100%; min-width: 0 }   /* pages use the whole window, however large */
 .page-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 16px }
 .page-head small { color: var(--muted) }
 
 .card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 18px; box-shadow: var(--shadow); margin-bottom: 16px }
-.card.flush { padding: 0; overflow-x: auto } .card.narrow { max-width: 520px }
+.card.flush { padding: 0; overflow-x: auto } .card.narrow { max-width: 640px }
 .tiles { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-bottom: 16px }
 .tile { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 16px 18px; box-shadow: var(--shadow); border-left: 4px solid var(--border) }
 .tile span { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .05em } .tile b { display: block; font-size: 30px; margin-top: 4px }
@@ -76,7 +76,7 @@ pre { background: var(--surface-2); border-radius: 8px; padding: 12px; overflow-
 .kv { display: grid; grid-template-columns: 110px 1fr; gap: 6px 12px; margin: 0 0 6px } .kv dt { color: var(--muted) } .kv dd { margin: 0 }
 
 .overlay { position: fixed; inset: 0; background: rgba(8,12,18,.55); display: flex; align-items: flex-start; justify-content: center; padding: 6vh 16px; overflow: auto; z-index: 10 }
-.modal { background: var(--surface); border-radius: 14px; width: 100%; max-width: 520px; padding: 20px 22px; box-shadow: 0 20px 60px rgba(0,0,0,.35) } .modal.wide { max-width: 820px }
+.modal { background: var(--surface); border-radius: 14px; width: 100%; max-width: 520px; padding: 20px 22px; box-shadow: 0 20px 60px rgba(0,0,0,.35) } .modal.wide { max-width: min(1100px, 94vw) }
 .modal > header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px }
 .modal footer, form footer { display: flex; justify-content: flex-end; gap: 10px; margin-top: 18px }
 .toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); background: var(--text); color: var(--bg); padding: 10px 18px; border-radius: 8px; z-index: 20 }
@@ -120,3 +120,12 @@ tr.dim td { opacity: .6 }
 /* long lists scroll inside the card with a sticky header, so the pager stays on screen at any page size */
 .table-scroll { max-height: calc(100vh - 260px); min-height: 200px; overflow: auto }
 .table-scroll thead th { position: sticky; top: 0; background: var(--surface); z-index: 1; box-shadow: 0 1px 0 var(--border) }
+
+/* hover/focus details for a row (mount options) */
+.tip { position: fixed; z-index: 30; max-width: min(640px, 90vw); padding: 8px 12px; border-radius: 8px; background: var(--surface-2);
+  border: 1px solid var(--border); box-shadow: 0 6px 24px rgba(0,0,0,.3); pointer-events: none; word-break: break-all }
+table.clickable tbody tr:hover { background: var(--surface-2) }
+.facts.compact { display: grid; grid-template-columns: 6.5em 1fr; gap: 4px 12px; margin: 4px 0 10px }
+.facts.compact > div { display: contents }
+.facts.compact dt { text-transform: none; letter-spacing: 0; font-size: 12px }
+.facts.compact dd { word-break: break-all }

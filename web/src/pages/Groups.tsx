@@ -21,7 +21,7 @@ function Editor({ initial, groups, templates, hosts, onClose, onSaved }: {
   const matches = useMemo(() => re && re !== 'invalid' ? hosts.filter(h => re.test(h.hostname)) : [], [re, hosts])
   const toggle = (s: Set<string>, set: (x: Set<string>) => void, v: string) => { const n = new Set(s); n.has(v) ? n.delete(v) : n.add(v); set(n) }
 
-  // Mountpoint conflicts within this group: two selected templates sharing a mountpoint.
+  // Mountpoint conflicts within this group: two selected mounts sharing a mountpoint.
   const conflicts = useMemo(() => {
     const seen = new Map<string, string>(); const out: string[] = []
     templates.filter(t => tpl.has(t.name)).forEach(t => { const o = seen.get(t.mountpoint); if (o) out.push(`${t.mountpoint} (${o}, ${t.name})`); else seen.set(t.mountpoint, t.name) })
@@ -56,14 +56,14 @@ function Editor({ initial, groups, templates, hosts, onClose, onSaved }: {
         </label>
         {re === 'invalid' ? <p className="err-text small">Invalid regular expression.</p>
           : re ? <p className="hint">Matches {matches.length} enrolled host{matches.length === 1 ? '' : 's'}{matches.length ? `: ${matches.slice(0, 6).map(h => h.hostname).join(', ')}${matches.length > 6 ? '…' : ''}` : ''}. Hosts that enrol later are added automatically.</p> : null}
-        <h3>Templates</h3>
-        {templates.length === 0 ? <Empty>Create a template first.</Empty> : (
+        <h3>Mounts</h3>
+        {templates.length === 0 ? <Empty>Create a mount first.</Empty> : (
           <div className="checks">{templates.map(t => (
             <label key={t.id} className="check"><input type="checkbox" checked={tpl.has(t.name)} onChange={() => toggle(tpl, setTpl, t.name)} />
               <b>{t.name}</b><span className="muted mono small">{t.mountpoint}</span></label>
           ))}</div>
         )}
-        {conflicts.length > 0 && <p className="err-text small">Templates in this group share a mountpoint: {conflicts.join('; ')}. Only one will apply.</p>}
+        {conflicts.length > 0 && <p className="err-text small">Mounts in this group share a mountpoint: {conflicts.join('; ')}. Only one will apply.</p>}
         {overlap.length > 0 && <p className="warn-text small">Same priority as {overlap.map(g => g.name).join(', ')} with an overlapping mountpoint — the winner is not well-defined. Use different priorities.</p>}
         <h3>Static members <small className="muted">({mem.size})</small></h3>
         <input placeholder="Filter hosts…" value={q} onChange={e => setQ(e.target.value)} />
@@ -94,8 +94,8 @@ export default function Groups({ canWrite }: { canWrite: boolean }) {
       <div className="page-head"><h1>Groups</h1>{canWrite && <button className="primary" disabled={!ready} onClick={() => setEdit('new')}>New group</button>}</div>
       <ErrorBox err={g.error || t.error || h.error} />
       <div className="card flush">
-        {!g.data ? <Empty>Loading…</Empty> : g.data.length === 0 ? <Empty>No groups yet. Groups link templates to hosts, statically or by hostname regex.</Empty> : (
-          <table><thead><tr><th>Name</th><th>Priority</th><th>Regex</th><th>Templates</th><th>Static members</th>{canWrite && <th />}</tr></thead><tbody>
+        {!g.data ? <Empty>Loading…</Empty> : g.data.length === 0 ? <Empty>No groups yet. Groups attach mounts to hosts, statically or by hostname regex.</Empty> : (
+          <table><thead><tr><th>Name</th><th>Priority</th><th>Regex</th><th>Mounts</th><th>Static members</th>{canWrite && <th />}</tr></thead><tbody>
             {g.data.map(x => (
               <tr key={x.id}><td><b>{x.name}</b></td><td>{x.priority}</td><td className="mono">{x.host_regex || <span className="muted">—</span>}</td>
                 <td>{x.templates.join(', ') || <span className="muted">—</span>}</td><td className="muted">{x.members.length}</td>
