@@ -5,6 +5,14 @@ Versioning: one `VERSION` for the agent, server and CLI RPMs. Bump the **minor**
 unchanged version, and requires a `## <version>` entry here. The RPM *Release* only changes for packaging-only
 respins (it is 1 for every new version).
 
+## 0.6.0
+### Added
+- **Search in the group editor.** The Mounts checklist has a search box (name, source, mountpoint or type), a "Selected only"
+  toggle and a selected count. Filtering never drops a ticked mount, and the list shows the mount's type, mountpoint and source.
+### Changed
+- Long checklists in the group editor (mounts and static members) render at most 200 rows, with a prompt to narrow the search,
+  so the editor stays responsive with thousands of mounts or hosts.
+
 ## 0.5.0
 ### Added
 - **Mounts page: pagination and search.** The same 25 / 50 / 100 / 250 rows-per-page pager as the Hosts page, plus separate

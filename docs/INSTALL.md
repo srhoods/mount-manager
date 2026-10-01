@@ -312,6 +312,9 @@ mmctl group add-template <group-id> <mount-id>
   copies a mount under a new name (it is not added to any group; use Edit to change what differs). Mount options show when you hover over a
   row. The Mounts page is paginated like Hosts (25, 50, 100 or 250 rows) and searches the name, source and mountpoint separately (case-insensitive substring
   matches) with a type drop-down; the filters combine, and `mmctl mount ls --name … --source … --mountpoint … --type …` does the same. Cloning never overwrites: a name that is already taken is refused.
+- In the group editor the **Mounts** checklist has a search box (name, source, mountpoint or type) and a "Selected only" toggle, so a group can be
+  assembled from thousands of mounts. Filtering never drops a ticked mount, and long lists show the first 200 matches (the static members list works the
+  same way).
 - Where mounts are allowed is enforced **on each host** (see 3.4), not just by the server.
 
 ### 2.8 Upgrades
