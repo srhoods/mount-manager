@@ -2,7 +2,7 @@
 # The agent additionally enforces allowed_mount_prefixes / allowed_mount_exact / allowed_fstypes (agent.conf)
 # before invoking these. This file is package-owned and replaced on upgrade: to permit extra locations,
 # add a separate file in /etc/sudoers.d/ (and extend agent.conf to match).
-Cmnd_Alias MM_MOUNT = /usr/bin/mount -t nfs *, /usr/bin/mount -t nfs4 *, /usr/bin/mount -t wekafs *
+Cmnd_Alias MM_MOUNT = /usr/bin/mount -t nfs *, /usr/bin/mount -t nfs4 *, /usr/bin/mount -t wekafs *, /usr/bin/mount -t fuse.vault-fs *
 Cmnd_Alias MM_UMOUNT = /usr/bin/umount /mnt/*, /usr/bin/umount /data/*, /usr/bin/umount /sqpc/*, /usr/bin/umount /sqpc
 Cmnd_Alias MM_MKDIR = /usr/bin/mkdir -p /mnt/*, /usr/bin/mkdir -p /data/*, /usr/bin/mkdir -p /sqpc/*, /usr/bin/mkdir -p /sqpc
 mountmgr ALL=(root) NOPASSWD: MM_MOUNT, MM_UMOUNT, MM_MKDIR
