@@ -5,6 +5,18 @@ Versioning: one `VERSION` for the agent, server and CLI RPMs. Bump the **minor**
 unchanged version, and requires a `## <version>` entry here. The RPM *Release* only changes for packaging-only
 respins (it is 1 for every new version).
 
+## 0.7.0
+### Added
+- **Vault FS (`fuse.vault-fs`) mounts.** A new mount type, mounted like NFS (`mount -t fuse.vault-fs -o <options> <source>
+  <mountpoint>`) and unmounted with `umount`. Available in the Mounts editor, the type filter, `mmctl mount set --type fuse.vault-fs`
+  and the API. The source is passed to the mount helper unchanged; the server only requires a single non-empty argument.
+  The agent's default `allowed_fstypes` and the packaged sudoers rules now include it, and an existing `fuse.vault-fs` mount at the
+  right mountpoint is adopted by type (the FUSE daemon decides what source the kernel reports). The Vault FS package itself is
+  still installed separately.
+### Upgrade notes
+- `agent.conf` files that set `allowed_fstypes` explicitly must add `fuse.vault-fs`; the sudoers file is replaced on upgrade.
+- Not yet verified against a real Vault FS installation (fake mount commands and a stand-in helper only).
+
 ## 0.6.0
 ### Added
 - **Search in the group editor.** The Mounts checklist has a search box (name, source, mountpoint or type), a "Selected only"
