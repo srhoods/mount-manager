@@ -784,3 +784,55 @@ func TestMountsSearchAndPagination(t *testing.T) {
 		t.Errorf("anonymous list: %d", code)
 	}
 }
+
+func TestVaultFSMounts(t *testing.T) {
+	s, ctx := testServer(t)
+	seedUser(t, s, ctx, "op", "operator")
+	seedUser(t, s, ctx, "ro", "readonly")
+	h := s.AdminMux()
+	op, ro := loginTok(t, h, "op"), loginTok(t, h, "ro")
+	post := func(tok, body string) int {
+		r := httptest.NewRequest("POST", "/api/templates", strings.NewReader(body))
+		r.Header.Set("Authorization", "Bearer "+tok)
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		return w.Code
+	}
+	if code := post(op, `{"name":"vault-projects","fstype":"fuse.vault-fs","source":"vault01:/projects","mountpoint":"/mnt/projects","options":"rw,allow_other,_netdev"}`); code != 200 {
+		t.Fatalf("create: %d", code)
+	}
+	if code := post(op, `{"name":"bad","fstype":"fuse.vault-fs","source":"two words","mountpoint":"/mnt/b"}`); code != 400 {
+		t.Errorf("source with a space: %d", code)
+	}
+	if code := post(op, `{"name":"bad2","fstype":"fuse.sshfs","source":"h:/p","mountpoint":"/mnt/b"}`); code != 400 {
+		t.Errorf("other FUSE type: %d", code)
+	}
+	if code := post(ro, `{"name":"nope","fstype":"fuse.vault-fs","source":"v:/x","mountpoint":"/mnt/n"}`); code != 403 {
+		t.Errorf("readonly: %d", code)
+	}
+	// stored, listed, filterable by type, and carried into a host's desired state unchanged
+	code, hdr, body := getJSON(t, h, "/api/templates?type=fuse.vault-fs", ro)
+	var rows []struct{ Name, Fstype, Source, Options string }
+	json.Unmarshal(body, &rows)
+	if code != 200 || hdr.Get("X-Total-Count") != "1" || len(rows) != 1 || rows[0].Fstype != "fuse.vault-fs" || rows[0].Options != "rw,allow_other,_netdev" {
+		t.Errorf("type filter: %d total=%s %+v", code, hdr.Get("X-Total-Count"), rows)
+	}
+	f := fx{s, ctx, t}
+	g := f.group("everyone", 100, ".")
+	var tid int64
+	s.DB.QueryRow(ctx, `SELECT id FROM templates WHERE name='vault-projects'`).Scan(&tid)
+	s.DB.Exec(ctx, `INSERT INTO group_templates VALUES($1,$2)`, g, tid)
+	hid := f.host("node-1.example.com")
+	m := f.mounts(hid, "node-1.example.com")["/mnt/projects"]
+	if m.FSType != "fuse.vault-fs" || m.Source != "vault01:/projects" || m.Options != "rw,allow_other,_netdev" {
+		t.Errorf("desired mount: %+v", m)
+	}
+	// the agent protocol is tab separated: the type must survive unchanged
+	var tsv strings.Builder
+	rr := httptest.NewRecorder()
+	s.desiredState(rr, httptest.NewRequest("GET", "/v1/desired-state", nil), hid, "node-1.example.com")
+	tsv.WriteString(rr.Body.String())
+	if !strings.Contains(tsv.String(), "mount\tvault01:/projects\t/mnt/projects\tfuse.vault-fs\trw,allow_other,_netdev\n") {
+		t.Errorf("agent desired-state line: %q", tsv.String())
+	}
+}

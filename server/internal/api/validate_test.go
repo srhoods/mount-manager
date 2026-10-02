@@ -20,6 +20,16 @@ func TestValidateTemplate(t *testing.T) {
 		{"ext4", "/dev/sda1", false},
 		{"xfs", "x", false},
 		{"cifs", "//srv/share", false},
+		{"fuse.vault-fs", "vault01:/projects", true},
+		{"fuse.vault-fs", "/vault/projects", true},
+		{"fuse.vault-fs", "vault://cluster/projects", true},
+		{"fuse.vault-fs", "projects", true},
+		{"fuse.vault-fs", "", false},
+		{"fuse.vault-fs", "   ", false},
+		{"fuse.vault-fs", "two words", false},
+		{"fuse.sshfs", "user@host:/path", false}, // other FUSE filesystems are not supported implicitly
+		{"fuse", "x", false},
+		{"fuse.vault", "x", false},
 	}
 	for _, c := range cases {
 		if got := ValidateTemplate(c.fst, c.src) == ""; got != c.ok {
