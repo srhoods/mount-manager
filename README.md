@@ -20,7 +20,7 @@ see the state of every host.
 - **Encrypted end to end.** Agents talk to the server over mutual TLS, using certificates issued by the server's
   built-in CA. The web and agent listeners can present certificates from your own CA instead, reloaded without a restart.
 
-Supported today: **NFS** (`nfs`, `nfs4`) and **Weka** (`wekafs`). Client drivers, such as the Weka client, are
+Supported today: **NFS** (`nfs`, `nfs4`), **Weka** (`wekafs`) and **Vault FS** (`fuse.vault-fs`). Client software, such as the Weka client or Vault FS, is
 installed separately. Local filesystems are deliberately out of scope. Target platform: Rocky Linux 9+.
 
 ## How it fits together
@@ -114,7 +114,7 @@ Known limitations and planned work:
 - Changes apply to all affected hosts at once. Canary and batch rollouts are not implemented.
 - Mounts are made by the agent after the network is up and are not in `/etc/fstab`, so `mmd` must be running after a
   reboot, and services that need a mount at boot should tolerate it appearing a moment after `remote-fs.target`.
-- `wekafs` support is verified with fake mount commands and the failure path only, not against a real Weka cluster.
+- `wekafs` and `fuse.vault-fs` support is verified with fake mount commands and the failure path only, not against a real Weka cluster or Vault FS.
 
 ## Security
 

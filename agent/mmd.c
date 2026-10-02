@@ -33,7 +33,7 @@ struct cfg {
 	char server[256], state_dir[256], token_file[256], allowed[256], allowed_exact[256], allowed_fst[128], ca_sha256[80];
 	char hostname[256], server_ca[256];
 	int interval, retry, use_sudo, mount_timeout, mount_timeout_wekafs;
-} C = {"", "/var/lib/mountmgr", "/var/lib/mountmgr/enroll.token", "/mnt,/data,/sqpc", "/sqpc", "nfs,nfs4,wekafs", "", "", "",
+} C = {"", "/var/lib/mountmgr", "/var/lib/mountmgr/enroll.token", "/mnt,/data,/sqpc", "/sqpc", "nfs,nfs4,wekafs,fuse.vault-fs", "", "", "",
        300, 900, 0, 60, 120};
 
 static const char *mountinfo_path = "/proc/self/mountinfo"; /* overridable for tests */
@@ -448,7 +448,8 @@ static void reconcile(void)
 		mounted = is_mounted(m->mp, src, sizeof src, mfst, sizeof mfst); a = find_app(m->mp);
 		if (mounted && a && !strcmp(a->hash, h)) { setst(i, "ok", ""); continue; }
 		/* Adopt a pre-existing mount (e.g. deployed by Ansible) instead of disrupting it. NFS is matched on
-		 * source; wekafs sources are reported in varying forms, so the filesystem type is enough there. */
+		 * source; wekafs and fuse.vault-fs report their source in varying forms (a FUSE daemon chooses what the
+		 * kernel shows), so the filesystem type is enough there. */
 		if (mounted && !a && (!strcmp(src, m->src) || (!strncmp(m->fst, "nfs", 3) ? 0 : !strcmp(mfst, m->fst)))) {
 			set_app(m->mp, h); setst(i, "ok", "");
 			logf_(LOG_NOTICE, "adopt", "mountpoint=%s source=%s", m->mp, m->src);

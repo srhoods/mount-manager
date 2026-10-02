@@ -290,9 +290,10 @@ Mounts are defined as **mounts** (one per filesystem to mount), applied to hosts
 "template"; the `mmctl template` command and the REST paths under `/api/templates` still work.)
 
 ```bash
-# a mount = one filesystem (types: nfs, nfs4, wekafs)
+# a mount = one filesystem (types: nfs, nfs4, wekafs, fuse.vault-fs)
 mmctl mount set data  nfs01:/export/data   /mnt/data --type nfs  --opts rw,_netdev,hard
 mmctl mount set fast  weka01/fs1           /sqpc     --type wekafs --opts rw
+mmctl mount set vault vault01:/projects    /mnt/projects --type fuse.vault-fs --opts rw,allow_other,_netdev
 mmctl mount clone data data-archive         # copy a mount under a new name, then change what differs with 'mount set'
 
 # a group = a set of mounts + members; membership is by explicit host and/or hostname regex
@@ -342,7 +343,8 @@ and mounts what they define.
 - The host can reach the server on TCP **8443**, and its NFS/Weka servers by name.
 - The host's name (`hostname`) is what appears in the UI and what group regexes match; use the FQDN the same way
   everywhere. Override with `hostname=` in `agent.conf` if needed.
-- For `wekafs` mounts, the Weka client is installed separately (by Ansible today).
+- For `wekafs` mounts, the Weka client is installed separately (by Ansible today). For `fuse.vault-fs` mounts, the Vault FS package is likewise
+  installed separately (so that `mount -t fuse.vault-fs` works on the host); Mount Manager only mounts and unmounts.
 
 ### 3.2 Create an enrolment token (on the server, or in the UI: Enrolment → Generate token)
 
@@ -400,7 +402,7 @@ On the host:
 ```bash
 systemctl status mountmgr-agent
 grep 'mountmgr\[' /var/log/messages | tail        # enrol result=ok, mount ... result=ok
-findmnt -t nfs,nfs4                                 # (or -t wekafs)
+findmnt -t nfs,nfs4                                 # (or -t wekafs, or -t fuse.vault-fs)
 ```
 
 On the server (or in the UI Hosts page):
@@ -420,27 +422,33 @@ nothing to mount ("No mounts are assigned to this host" in the UI).
 ### 3.5 What the agent is allowed to do
 
 - Runs as the `mountmgr` service account, not root. `/etc/sudoers.d/mountmgr` (package-owned) permits only
-  `mount -t nfs|nfs4|wekafs`, `umount` under `/mnt`, `/data`, `/sqpc`, and `mkdir -p` in the same places.
+  `mount -t nfs|nfs4|wekafs|fuse.vault-fs`, `umount` under `/mnt`, `/data`, `/sqpc`, and `mkdir -p` in the same places.
 - **Agent-side allow-lists** in `/etc/mountmgr/agent.conf` limit what the server can make it do, regardless of
   what is configured centrally. Defaults:
 
   ```ini
   allowed_mount_prefixes=/mnt,/data,/sqpc   # mounts below these paths
   allowed_mount_exact=/sqpc                 # mounts at exactly these paths
-  allowed_fstypes=nfs,nfs4,wekafs
+  allowed_fstypes=nfs,nfs4,wekafs,fuse.vault-fs
   ```
 
   To allow another location, extend **both** `agent.conf` and the sudoers rules (add a separate file in
   `/etc/sudoers.d/`; the packaged one is replaced on upgrade). A refused mount shows in the UI as failed with the
   reason.
 - Pre-existing mounts (for example from Ansible) at the same mountpoint are **adopted, not disturbed**, when
-  the source matches (NFS) or the type matches (wekafs); otherwise the agent replaces them to match the mount definition.
+  the source matches (NFS) or the type matches (wekafs, fuse.vault-fs); otherwise the agent replaces them to match the mount definition.
   It never unmounts anything it did not mount itself.
 - Every action is logged to syslog (`/var/log/messages`) as `action=… mountpoint=… result=…` and reported to
   the server's audit log.
 
 ### 3.6 Behaviour worth knowing
 
+- **Vault FS (`fuse.vault-fs`).** Mounted like NFS: `mount -t fuse.vault-fs -o <options> <source> <mountpoint>`, which runs the host's
+  `mount.fuse.vault-fs` helper (or the generic `mount.fuse`, which starts the `vault-fs` program). The source is passed through unchanged. Unmounting
+  is a plain `umount`, so open files make it *pending* and retried, as for any mount. A FUSE daemon decides what source the kernel shows, so an
+  existing `fuse.vault-fs` mount at the right mountpoint is adopted by type, not replaced. If the daemon dies, the mount is left in place
+  but unusable ("Transport endpoint is not connected"); the agent does not yet detect that case. Agents installed before this type existed keep an
+  explicit `allowed_fstypes` list in `agent.conf` unchanged: add `fuse.vault-fs` to it (the package-owned sudoers file is updated automatically).
 - **Slow first Weka mount:** the first `wekafs` mount on a host compiles the client driver and starts the Weka container, so
   the agent allows `mount_timeout_wekafs` (default 120 seconds) for it, against `mount_timeout` (default 60) for NFS.
   Both are set in `agent.conf`. If a mount still times out, the root mount process keeps running in the background, so the

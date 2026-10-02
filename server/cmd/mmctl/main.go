@@ -33,8 +33,8 @@ var version = "dev"
 const usage = `usage: mmctl <command>
   version
   login <server-url> <username> [--ca file | --insecure]     (password from MM_PASSWORD or prompt-less stdin)
-  mount ls [--name text] [--source text] [--mountpoint text] [--type nfs|nfs4|wekafs] [--limit N] [--offset N]
-  mount set <name> <source> <mountpoint> [--type nfs|nfs4|wekafs] [--opts o1,o2] | clone <id|name> <new-name> | rm <id>
+  mount ls [--name text] [--source text] [--mountpoint text] [--type nfs|nfs4|wekafs|fuse.vault-fs] [--limit N] [--offset N]
+  mount set <name> <source> <mountpoint> [--type nfs|nfs4|wekafs|fuse.vault-fs] [--opts o1,o2] | clone <id|name> <new-name> | rm <id>
     (a mount was previously called a template; "mmctl template ..." still works)
   group ls | set <name> [--priority N] [--regex RE] | rm <id>
   group add-template <group-id> <mount-id> | rm-template <group-id> <mount-id>

@@ -33,7 +33,7 @@ static void setup(void)
 	snprintf(C.state_dir, sizeof C.state_dir, "%s/state", T);
 	snprintf(path_applied, sizeof path_applied, "%s/state/applied.tsv", T);
 	snprintf(C.allowed, sizeof C.allowed, "%s", MP); C.allowed_exact[0] = 0;
-	snprintf(C.allowed_fst, sizeof C.allowed_fst, "nfs,nfs4,wekafs");
+	snprintf(C.allowed_fst, sizeof C.allowed_fst, "nfs,nfs4,wekafs,fuse.vault-fs");
 	C.use_sudo = 0; C.retry = 900; C.mount_timeout = 5;
 	nwant = napp = nev = 0; rev[0] = 0;
 	memset(last_try, 0, sizeof last_try); memset(last_state, 0, sizeof last_state); memset(last_err, 0, sizeof last_err);
@@ -279,6 +279,74 @@ TEST(wekafs_mount_uses_wekafs_type)
 	CHECK_STR(last_state[0], "ok");
 }
 
+TEST(vaultfs_mount_uses_the_fuse_subtype)
+{
+	/* mounted like NFS: mount -t fuse.vault-fs -o <options> <source> <mountpoint> */
+	desire("mount\tvault01:/projects\t%s/v\tfuse.vault-fs\trw,allow_other,_netdev\n", MP); reconcile();
+	CHECK(calls("mount -t fuse.vault-fs -o rw,allow_other,_netdev vault01:/projects") == 1);
+	CHECK_STR(last_state[0], "ok");
+	CHECK(find_app(want[0].mp) != NULL);
+	clear_calls(); reconcile();
+	CHECK(calls_total() == 0);                         /* and is then left alone */
+}
+
+TEST(vaultfs_mount_without_options)
+{
+	desire("mount\tvault01:/projects\t%s/v\tfuse.vault-fs\t\n", MP); reconcile();
+	CHECK(calls("mount -t fuse.vault-fs vault01:/projects") == 1);   /* no -o when there are none */
+	CHECK(calls("mount -t fuse.vault-fs -o") == 0);
+	CHECK_STR(last_state[0], "ok");
+}
+
+TEST(adopts_existing_vaultfs_mount_whatever_the_source_form)
+{
+	char v[400]; snprintf(v, sizeof v, "%s/v", MP);
+	preload_mount(v, "fuse.vault-fs", "vault-fs");       /* what a FUSE daemon may report instead of the template's source */
+	desire("mount\tvault01:/projects\t%s\tfuse.vault-fs\trw\n", v); reconcile();
+	CHECK(calls_total() == 0); CHECK_STR(last_state[0], "ok"); CHECK(has_event("adopt"));
+}
+
+TEST(replaces_a_different_filesystem_mounted_at_a_vaultfs_mountpoint)
+{
+	char v[400]; snprintf(v, sizeof v, "%s/v", MP);
+	preload_mount(v, "nfs4", "old:/export");             /* not vault-fs: must not be mistaken for it */
+	desire("mount\tvault01:/projects\t%s\tfuse.vault-fs\trw\n", v); reconcile();
+	CHECK(calls("umount") == 1 && calls("mount -t fuse.vault-fs") == 1);
+	CHECK(call_index("umount") < call_index("mount -t"));
+	CHECK_STR(last_state[0], "ok");
+}
+
+TEST(busy_vaultfs_unmount_is_pending_like_any_other)
+{
+	char v[400]; snprintf(v, sizeof v, "%s/v", MP);
+	desire("mount\tvault01:/projects\t%s\tfuse.vault-fs\trw\n", v); reconcile();
+	set_busy(v); clear_calls();
+	desire("mount\tvault01:/projects\t%s\tfuse.vault-fs\trw,ro\n", v); reconcile();
+	CHECK_STR(last_state[0], "pending"); CHECK(calls("mount -t") == 0); CHECK(mounted_at(v));
+}
+
+TEST(default_allowed_fstypes)
+{
+	struct cfg saved = C;
+	struct cfg def = { "", "", "", "/mnt,/data,/sqpc", "/sqpc", "nfs,nfs4,wekafs,fuse.vault-fs", "", "", "", 300, 900, 0, 60, 120 };
+	C = def;
+	CHECK(allowed_fstype("fuse.vault-fs"));
+	CHECK(allowed_fstype("nfs") && allowed_fstype("nfs4") && allowed_fstype("wekafs"));
+	CHECK(!allowed_fstype("fuse.sshfs"));                /* other FUSE filesystems are not implied */
+	CHECK(!allowed_fstype("fuse"));
+	CHECK(!allowed_fstype("fuse.vault"));                /* exact match, not a prefix */
+	CHECK(!allowed_fstype("ext4") && !allowed_fstype(""));
+	C = saved;
+}
+
+TEST(vaultfs_refused_when_the_host_does_not_allow_it)
+{
+	snprintf(C.allowed_fst, sizeof C.allowed_fst, "nfs,nfs4,wekafs");   /* an older agent.conf with an explicit list */
+	desire("mount\tvault01:/projects\t%s/v\tfuse.vault-fs\trw\n", MP); reconcile();
+	CHECK(calls_total() == 0);
+	CHECK_STR(last_state[0], "failed"); CHECK(strstr(last_err[0], "allowed_fstypes") != NULL);
+}
+
 TEST(disallowed_fstype_is_refused)
 {
 	desire("mount\t/dev/sda1\t%s/l\text4\trw\nmount\tx:/y\t%s/m\tcifs\trw\n", MP, MP); reconcile();
@@ -305,7 +373,7 @@ TEST(mountpoint_allow_list)
 TEST(sqpc_default_paths)
 {
 	struct cfg saved = C;
-	struct cfg def = { "", "", "", "/mnt,/data,/sqpc", "/sqpc", "nfs,nfs4,wekafs", "", "", "", 300, 900, 0, 60, 120 };
+	struct cfg def = { "", "", "", "/mnt,/data,/sqpc", "/sqpc", "nfs,nfs4,wekafs,fuse.vault-fs", "", "", "", 300, 900, 0, 60, 120 };
 	C = def;
 	CHECK(allowed_path("/sqpc"));                     /* exact */
 	CHECK(allowed_path("/sqpc/projects"));            /* below */
@@ -426,6 +494,7 @@ int main(void)
 {
 	setenv("MM_ORIG_PATH", getenv("PATH") ? getenv("PATH") : "/usr/bin:/bin", 1);
 	printf("mmd mount logic tests\n");
+	if (!strstr(C.allowed_fst, "fuse.vault-fs") || !strstr(C.allowed_fst, "wekafs") || !strstr(C.allowed_fst, "nfs4")) { printf("  FAIL built-in allowed_fstypes must include nfs, nfs4, wekafs and fuse.vault-fs (got %s)\n", C.allowed_fst); return 1; }
 	if (C.mount_timeout != 60 || C.mount_timeout_wekafs != 120) { printf("  FAIL built-in timeouts must be 60s (default) and 120s (wekafs)\n"); return 1; }
 	RUN(parses_desired_state);
 	RUN(fresh_mount_then_idempotent);
@@ -445,6 +514,13 @@ int main(void)
 	RUN(remounts_existing_nfs_mount_with_different_source);
 	RUN(adopts_existing_wekafs_mount_whatever_the_source_form);
 	RUN(wekafs_mount_uses_wekafs_type);
+	RUN(vaultfs_mount_uses_the_fuse_subtype);
+	RUN(vaultfs_mount_without_options);
+	RUN(adopts_existing_vaultfs_mount_whatever_the_source_form);
+	RUN(replaces_a_different_filesystem_mounted_at_a_vaultfs_mountpoint);
+	RUN(busy_vaultfs_unmount_is_pending_like_any_other);
+	RUN(default_allowed_fstypes);
+	RUN(vaultfs_refused_when_the_host_does_not_allow_it);
 	RUN(disallowed_fstype_is_refused);
 	RUN(mountpoint_allow_list);
 	RUN(sqpc_default_paths);

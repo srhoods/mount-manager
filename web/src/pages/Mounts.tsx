@@ -21,9 +21,10 @@ function Editor({ initial, existing, onClose, onSaved }: { initial: Template | n
     <Modal title={initial ? `Edit mount “${initial.name}”` : 'New mount'} onClose={onClose}>
       <form onSubmit={submit}>
         <label>Name<input value={f.name} onChange={set('name')} disabled={!!initial} required /></label>
-        <label>Type<select value={f.fstype} onChange={set('fstype')}><option value="nfs">nfs</option><option value="nfs4">nfs4</option><option value="wekafs">wekafs</option></select></label>
-        <label>Source<input className="mono" placeholder={f.fstype === 'wekafs' ? 'backend/filesystem  e.g. weka01/fs1' : 'server:/export/path'} value={f.source} onChange={set('source')} required /></label>
+        <label>Type<select value={f.fstype} onChange={set('fstype')}><option value="nfs">nfs</option><option value="nfs4">nfs4</option><option value="wekafs">wekafs</option><option value="fuse.vault-fs">fuse.vault-fs</option></select></label>
+        <label>Source<input className="mono" placeholder={f.fstype === 'wekafs' ? 'backend/filesystem  e.g. weka01/fs1' : f.fstype === 'fuse.vault-fs' ? 'source as passed to vault-fs' : 'server:/export/path'} value={f.source} onChange={set('source')} required /></label>
         {f.fstype === 'wekafs' && <p className="hint">The first Weka mount on a host compiles the client driver and starts the Weka container, so the agent allows up to 120 seconds for it.</p>}
+        {f.fstype === 'fuse.vault-fs' && <p className="hint">Mounted with <span className="mono">mount -t fuse.vault-fs</span>, like an NFS mount. The vault-fs package must already be installed on each host; Mount Manager does not deploy it.</p>}
         <label>Mountpoint<input className="mono" placeholder="/mnt/data, /sqpc/projects" value={f.mountpoint} onChange={set('mountpoint')} required pattern="/.*" /></label>
         <label>Options<input className="mono" value={f.options} onChange={set('options')} /></label>
         {initial && <p className="hint">Saving changes to an existing mount rolls the update out to every host using it: the agent unmounts and remounts. Busy mounts are reported as pending and retried.</p>}
@@ -61,7 +62,7 @@ function CloneDialog({ src, onClose, onCloned }: { src: Template; onClose: () =>
 
 interface Tip { x: number; y: number; m: Template }
 
-const TYPES = ['nfs', 'nfs4', 'wekafs']
+const TYPES = ['nfs', 'nfs4', 'wekafs', 'fuse.vault-fs']
 
 export default function Mounts({ canWrite }: { canWrite: boolean }) {
   const [fName, setFName] = useState(''), [fSource, setFSource] = useState(''), [fMount, setFMount] = useState(''), [fType, setFType] = useState('')

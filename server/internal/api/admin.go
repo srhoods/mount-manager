@@ -371,7 +371,7 @@ func (s *Server) auditList(w http.ResponseWriter, r *http.Request) {
 }
 
 // SupportedFSTypes are the filesystem types the agent will mount (agents enforce their own allow-list too).
-var SupportedFSTypes = []string{"nfs", "nfs4", "wekafs"}
+var SupportedFSTypes = []string{"nfs", "nfs4", "wekafs", "fuse.vault-fs"}
 
 // ValidateTemplate returns a human-readable problem with the type/source combination, or "".
 func ValidateTemplate(fstype, source string) string {
@@ -384,6 +384,12 @@ func ValidateTemplate(fstype, source string) string {
 		// mount -t wekafs backend[,backend...]/filesystem MOUNTPOINT
 		if i := strings.LastIndex(source, "/"); i <= 0 || i == len(source)-1 || strings.HasPrefix(source, "/") {
 			return "wekafs source must look like backend/filesystem (e.g. weka01/fs1)"
+		}
+	case "fuse.vault-fs":
+		// mount -t fuse.vault-fs SOURCE MOUNTPOINT. The source is whatever vault-fs expects; it is deliberately not
+		// constrained further, only to a single non-empty argument.
+		if strings.TrimSpace(source) == "" || strings.ContainsAny(source, " \t") {
+			return "fuse.vault-fs source is required and must be a single argument without spaces"
 		}
 	default:
 		return "unsupported fstype (" + strings.Join(SupportedFSTypes, ", ") + ")"
