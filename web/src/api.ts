@@ -4,6 +4,7 @@ export interface HostBrief { id: number; hostname: string }
 export interface HostSummary { total: number; in_sync: number; pending: number; offline: number; unknown: number }
 export interface HostQuery { q?: string; state?: string; limit?: number; offset?: number }
 export interface MountQuery { name?: string; source?: string; mountpoint?: string; type?: string; limit?: number; offset?: number }
+export interface ServerVersion { version: string; commit: string; built: string; started: string; uptime_seconds: number }
 export type TokenStatus = 'active' | 'expired' | 'used' | 'revoked'
 export interface EnrolToken {
   id: number; note: string; created_at: string; created_by: string; expires: string
@@ -63,6 +64,7 @@ export const api = {
     return callFull<Host[]>('GET', `/api/hosts?${qs}`).then(r => ({ items: r.data, total: r.total }))
   },
   hostNames: () => call<HostBrief[]>('GET', '/api/hosts?brief=1'),
+  version: () => call<ServerVersion>('GET', '/api/version'),
   hostSummary: () => call<HostSummary>('GET', '/api/hosts/summary'),
   host: (id: number) => call<HostDetail>('GET', `/api/hosts/${id}/mounts`),
   deleteHost: (id: number) => call('DELETE', `/api/hosts/${id}`),

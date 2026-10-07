@@ -140,3 +140,10 @@ table.clickable tbody tr:hover { background: var(--surface-2) }
 .list-filter input { flex: 1 }
 .list-filter label.check { white-space: nowrap }
 label.check .src { margin-left: auto; padding-left: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 45% }
+
+/* server version in the sidebar, About dialog, update banner */
+button.ver { background: none; border: 0; border-top: 1px solid var(--border); border-radius: 0; text-align: left; color: var(--muted); font-size: 12px; padding: 10px 12px; margin-top: 8px }
+button.ver:hover:not(:disabled) { background: var(--surface-2); color: var(--text) }
+.facts.compact.about { grid-template-columns: 11em 1fr }
+.banner { background: var(--warn-bg); color: var(--warn); border-radius: 8px; padding: 10px 14px; margin-bottom: 16px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap }
+.banner button { margin-left: auto }

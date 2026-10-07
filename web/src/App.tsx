@@ -1,6 +1,6 @@
 import { FormEvent, useEffect, useState } from 'react'
 import { api, getSession, setSession, setUnauthorizedHandler, Session } from './api'
-import { ErrorBox } from './ui'
+import { ErrorBox, Modal, duration, fmtTime, useLoad } from './ui'
 import Dashboard from './pages/Dashboard'
 import Hosts from './pages/Hosts'
 import Mounts from './pages/Mounts'
@@ -36,6 +36,56 @@ function Login({ onLogin }: { onLogin: (s: Session, keep: boolean) => void }) {
   )
 }
 
+// The bundle is served by the server it was built with, so a different version here means this tab predates an upgrade.
+const UI_VERSION = __APP_VERSION__
+
+function About({ session, onClose, ver }: { session: Session; onClose: () => void; ver: { version: string; commit: string; built: string; started: string; uptime_seconds: number } | null }) {
+  return (
+    <Modal title="About Mount Manager" onClose={onClose}>
+      <dl className="facts compact about">
+        <div><dt>Server version</dt><dd><b>{ver ? ver.version : '…'}</b></dd></div>
+        <div><dt>Commit</dt><dd className="mono">{ver?.commit ?? '…'}</dd></div>
+        <div><dt>Built</dt><dd>{ver ? (ver.built === 'unknown' ? 'unknown' : fmtTime(ver.built)) : '…'}</dd></div>
+        <div><dt>Server running since</dt><dd>{ver ? `${fmtTime(ver.started)} (up ${duration(ver.uptime_seconds)})` : '…'}</dd></div>
+        <div><dt>This page (UI)</dt><dd>{UI_VERSION}{ver && ver.version !== 'dev' && ver.version !== UI_VERSION && <span className="warn-text"> — differs from the server, reload</span>}</dd></div>
+        <div><dt>Signed in as</dt><dd>{session.user} ({session.role})</dd></div>
+      </dl>
+      <footer><button className="primary" onClick={onClose}>Close</button></footer>
+    </Modal>
+  )
+}
+
+function Shell({ session, page, logout }: { session: Session; page: string; logout: () => void }) {
+  const canWrite = session.role === 'admin' || session.role === 'operator'
+  const isAdmin = session.role === 'admin'
+  const ver = useLoad(api.version, 5 * 60 * 1000)   // also notices an upgrade while the page stays open
+  const [about, setAbout] = useState(false)
+  const v = ver.data
+  const stale = !!v && v.version !== 'dev' && UI_VERSION !== 'dev' && v.version !== UI_VERSION
+  return (
+    <div className="shell">
+      <aside>
+        <div className="brand"><span className="logo" />Mount Manager</div>
+        <nav>{NAV.map(([k, l]) => <a key={k} href={`#/${k}`} className={page === k ? 'active' : ''}>{l}</a>)}</nav>
+        <button className="ver" onClick={() => setAbout(true)} title={v ? `Commit ${v.commit}, built ${v.built}. Click for details.` : 'Server version'}>
+          {v ? `Server v${v.version}` : ver.error ? 'Version unavailable' : 'Server version…'}
+        </button>
+        <div className="who"><div><b>{session.user}</b><small>{session.role}</small></div><button onClick={logout}>Sign out</button></div>
+      </aside>
+      <main>
+        {stale && <div className="banner" role="status">Mount Manager was updated: this page is v{UI_VERSION} but the server is now v{v!.version}. <button onClick={() => location.reload()}>Reload</button></div>}
+        {page === 'dashboard' && <Dashboard />}
+        {page === 'hosts' && <Hosts canWrite={canWrite} />}
+        {page === 'groups' && <Groups canWrite={canWrite} />}
+        {page === 'mounts' && <Mounts canWrite={canWrite} />}
+        {page === 'enrol' && <Enrol canWrite={isAdmin} />}
+        {page === 'audit' && <Audit />}
+      </main>
+      {about && <About session={session} ver={v ?? null} onClose={() => setAbout(false)} />}
+    </div>
+  )
+}
+
 export default function App() {
   const [session, setSess] = useState<Session | null>(getSession())
   const [page, setPage] = useState(route())
@@ -44,23 +94,5 @@ export default function App() {
   useEffect(() => { const h = () => setPage(route()); window.addEventListener('hashchange', h); return () => window.removeEventListener('hashchange', h) }, [])
 
   if (!session) return <Login onLogin={(s, keep) => { setSession(s, keep); setSess(s) }} />
-  const canWrite = session.role === 'admin' || session.role === 'operator'
-  const isAdmin = session.role === 'admin'
-  return (
-    <div className="shell">
-      <aside>
-        <div className="brand"><span className="logo" />Mount Manager</div>
-        <nav>{NAV.map(([k, l]) => <a key={k} href={`#/${k}`} className={page === k ? 'active' : ''}>{l}</a>)}</nav>
-        <div className="who"><div><b>{session.user}</b><small>{session.role}</small></div><button onClick={logout}>Sign out</button></div>
-      </aside>
-      <main>
-        {page === 'dashboard' && <Dashboard />}
-        {page === 'hosts' && <Hosts canWrite={canWrite} />}
-        {page === 'groups' && <Groups canWrite={canWrite} />}
-        {page === 'mounts' && <Mounts canWrite={canWrite} />}
-        {page === 'enrol' && <Enrol canWrite={isAdmin} />}
-        {page === 'audit' && <Audit />}
-      </main>
-    </div>
-  )
+  return <Shell session={session} page={page} logout={logout} />
 }
