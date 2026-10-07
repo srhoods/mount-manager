@@ -5,6 +5,16 @@ Versioning: one `VERSION` for the agent, server and CLI RPMs. Bump the **minor**
 unchanged version, and requires a `## <version>` entry here. The RPM *Release* only changes for packaging-only
 respins (it is 1 for every new version).
 
+## 0.8.0
+### Added
+- **Server version in the web UI.** The bottom of the sidebar shows "Server v0.8.0"; clicking it opens an About dialog with the server
+  version, commit, build time, how long the server has been running, and the version of the page you are looking at.
+- **Update notice.** The UI knows which version it was built as. If the server reports a different one (for example after an upgrade while
+  a browser tab was open), a banner offers a one-click reload so you are not running an old UI against a new server.
+- `GET /api/version` (requires a sign-in, so the exact version is not shown to anonymous visitors) and `mmctl version --server`.
+- The server's RPM build stamps the commit (marked `-dirty` if the tree had uncommitted changes) and build time into the binary; the start-up
+  log line shows them too.
+
 ## 0.7.0
 ### Added
 - **Vault FS (`fuse.vault-fs`) mounts.** A new mount type, mounted like NFS (`mount -t fuse.vault-fs -o <options> <source>

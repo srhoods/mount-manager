@@ -522,7 +522,7 @@ schema): `MM_TEST_DSN='postgres://…' go test ./...` from `server/`.
 |------|---------|
 | Server logs | `journalctl -u mountmgr-server -f` |
 | Agent logs | `grep 'mountmgr\[' /var/log/messages` |
-| Versions | `mmserver -version`, `mmctl version`, `mmd -V` |
+| Versions | `mmserver -version`, `mmctl version` (add `--server` for the server you are logged in to), `mmd -V`; in the web UI, the bottom of the sidebar (click for details) |
 | Reset the admin password | `runuser -u mmserver -- mmserver -init-admin '<new>'` (with `server.env` sourced) |
 | Test directory login | `mmserver -ldap-config … -ldap-check <user>` |
 | List hosts / one host | `mmctl host ls` / `mmctl host show <id>` |
