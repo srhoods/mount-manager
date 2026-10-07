@@ -19,6 +19,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/rhoods/mountmanager/internal/db"
@@ -834,5 +835,28 @@ func TestVaultFSMounts(t *testing.T) {
 	tsv.WriteString(rr.Body.String())
 	if !strings.Contains(tsv.String(), "mount\tvault01:/projects\t/mnt/projects\tfuse.vault-fs\trw,allow_other,_netdev\n") {
 		t.Errorf("agent desired-state line: %q", tsv.String())
+	}
+}
+
+func TestVersionEndpoint(t *testing.T) {
+	s, ctx := testServer(t)
+	s.Info = BuildInfo{Version: "9.8.7", Commit: "abc123def", Built: "2026-01-02T03:04:05Z", Started: time.Now().Add(-90 * time.Second)}
+	seedUser(t, s, ctx, "ro", "readonly")
+	h := s.AdminMux()
+	if code, _, _ := getJSON(t, h, "/api/version", ""); code != 401 {
+		t.Errorf("the exact version must not be disclosed anonymously: %d", code)
+	}
+	code, _, body := getJSON(t, h, "/api/version", loginTok(t, h, "ro"))
+	var v struct {
+		Version, Commit, Built string
+		Started                time.Time
+		Uptime                 int64 `json:"uptime_seconds"`
+	}
+	json.Unmarshal(body, &v)
+	if code != 200 || v.Version != "9.8.7" || v.Commit != "abc123def" || v.Built != "2026-01-02T03:04:05Z" {
+		t.Errorf("version info: %d %s", code, body)
+	}
+	if v.Uptime < 89 || v.Uptime > 120 || v.Started.IsZero() {
+		t.Errorf("uptime/started: %+v", v)
 	}
 }

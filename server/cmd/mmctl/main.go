@@ -31,7 +31,7 @@ var cfg config
 var version = "dev"
 
 const usage = `usage: mmctl <command>
-  version
+  version [--server]      (--server also shows the server you are logged in to)
   login <server-url> <username> [--ca file | --insecure]     (password from MM_PASSWORD or prompt-less stdin)
   mount ls [--name text] [--source text] [--mountpoint text] [--type nfs|nfs4|wekafs|fuse.vault-fs] [--limit N] [--offset N]
   mount set <name> <source> <mountpoint> [--type nfs|nfs4|wekafs|fuse.vault-fs] [--opts o1,o2] | clone <id|name> <new-name> | rm <id>
@@ -151,6 +151,15 @@ func main() {
 	}
 	cmd, args := args[0], args[1:]
 	if cmd == "version" || cmd == "--version" {
+		if srv, _ := flagBool(args, "--server"); srv {
+			var v struct {
+				Version, Commit, Built string
+				Uptime                 int64 `json:"uptime_seconds"`
+			}
+			json.Unmarshal(call("GET", "/api/version", nil), &v)
+			fmt.Printf("mmctl  %s\nserver %s (commit %s, built %s, up %s)\n", version, v.Version, v.Commit, v.Built, humanDuration(v.Uptime))
+			return
+		}
 		fmt.Println(version)
 		return
 	}

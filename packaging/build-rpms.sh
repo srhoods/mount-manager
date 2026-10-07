@@ -27,7 +27,10 @@ V=$(tr -d ' \n' < VERSION)
 echo "== web ui"; (cd web && npm ci --silent && npm run build --silent)
 T=$(mktemp -d); trap 'rm -rf "$T"' EXIT
 echo "== go build $V"
-(cd server && for b in mmserver mmctl; do CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=$V" -o "$T/$b" ./cmd/$b; done)
+COMMIT=$(git rev-parse --short=9 HEAD 2>/dev/null || echo unknown); [ -z "$(git status --porcelain 2>/dev/null)" ] || COMMIT="$COMMIT-dirty"
+BUILT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+(cd server && CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=$V -X main.commit=$COMMIT -X main.built=$BUILT" -o "$T/mmserver" ./cmd/mmserver &&
+             CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=$V" -o "$T/mmctl" ./cmd/mmctl)
 CL="* $(LC_ALL=C date '+%a %b %d %Y') Steven <steven@rhoods.com> - $V-1
 - Release $V; see CHANGELOG.md"
 mkdir -p "$T/top/SOURCES" "$T/top/SPECS"

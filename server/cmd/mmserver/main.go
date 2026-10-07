@@ -23,8 +23,12 @@ import (
 	"github.com/rhoods/mountmanager/internal/tlsutil"
 )
 
-// version is set at build time (-ldflags "-X main.version=...").
-var version = "dev"
+// Set at build time: -ldflags "-X main.version=... -X main.commit=... -X main.built=...".
+var (
+	version = "dev"
+	commit  = "unknown"
+	built   = "unknown"
+)
 
 func main() {
 	dsn := flag.String("dsn", os.Getenv("MM_DSN"), "postgres DSN (or MM_DSN)")
@@ -114,6 +118,7 @@ func main() {
 	agentGet := serverCert("agent", tlsutil.Pair{Cert: *agentCert, Key: *agentKey}, shared)
 
 	s := api.New(pool, ca)
+	s.Info = api.BuildInfo{Version: version, Commit: commit, Built: built, Started: time.Now().UTC()}
 	if *ldapCfg != "" {
 		cfg, err := auth.LoadConfig(*ldapCfg)
 		if err != nil {
@@ -131,7 +136,7 @@ func main() {
 	adminSrv := &http.Server{Addr: *adminAddr, Handler: s.AdminMux(), TLSConfig: &tls.Config{
 		GetCertificate: adminGet, MinVersion: tls.VersionTLS12}}
 	go func() { log.Fatal(adminSrv.ListenAndServeTLS("", "")) }()
-	log.Printf("mmserver %s: agent %s admin %s", version, *agentAddr, *adminAddr)
+	log.Printf("mmserver %s (commit %s, built %s): agent %s admin %s", version, commit, built, *agentAddr, *adminAddr)
 	log.Fatal(agentSrv.ListenAndServeTLS("", ""))
 }
 

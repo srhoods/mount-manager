@@ -40,6 +40,7 @@ func (s *Server) AdminMux() http.Handler {
 	mux.HandleFunc("DELETE /api/groups/{id}/templates/{tid}", rw(s.link(`DELETE FROM group_templates WHERE group_id=$1 AND template_id=$2`)))
 	mux.HandleFunc("POST /api/groups/{id}/members/{tid}", rw(s.link(`INSERT INTO group_members VALUES($1,$2) ON CONFLICT DO NOTHING`)))
 	mux.HandleFunc("DELETE /api/groups/{id}/members/{tid}", rw(s.link(`DELETE FROM group_members WHERE group_id=$1 AND host_id=$2`)))
+	mux.HandleFunc("GET /api/version", ro(s.versionInfo))
 	mux.HandleFunc("GET /api/hosts", ro(s.listHosts))
 	mux.HandleFunc("GET /api/hosts/summary", ro(s.hostSummary))
 	mux.HandleFunc("DELETE /api/hosts/{id}", rw(s.del("hosts")))
@@ -591,4 +592,16 @@ func (s *Server) listTemplates(w http.ResponseWriter, r *http.Request) {
 		out = append(out, map[string]any{"id": id, "name": name, "fstype": fst, "source": src, "mountpoint": mp, "options": opts, "version": ver})
 	}
 	jsonOut(w, 200, out)
+}
+
+// versionInfo reports which build of the server is running. It needs a sign-in, so the exact version is not
+// disclosed to anonymous visitors.
+func (s *Server) versionInfo(w http.ResponseWriter, r *http.Request) {
+	jsonOut(w, 200, map[string]any{
+		"version":        s.Info.Version,
+		"commit":         s.Info.Commit,
+		"built":          s.Info.Built,
+		"started":        s.Info.Started,
+		"uptime_seconds": int64(time.Since(s.Info.Started).Seconds()),
+	})
 }

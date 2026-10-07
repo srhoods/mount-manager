@@ -26,13 +26,22 @@ type Directory interface {
 	Authenticate(user, password string) (*auth.Result, error)
 }
 
+// BuildInfo identifies the running server build; it is set by main from linker flags.
+type BuildInfo struct {
+	Version string
+	Commit  string
+	Built   string
+	Started time.Time
+}
+
 type Server struct {
-	DB  *pgxpool.Pool
-	CA  *pki.CA
-	Dir Directory // optional
-	mu  sync.Mutex
-	re  map[string]*regexp.Regexp
-	lim *limiter
+	Info BuildInfo
+	DB   *pgxpool.Pool
+	CA   *pki.CA
+	Dir  Directory // optional
+	mu   sync.Mutex
+	re   map[string]*regexp.Regexp
+	lim  *limiter
 }
 
 func New(db *pgxpool.Pool, ca *pki.CA) *Server {
